@@ -191,11 +191,6 @@ function handleGatewayEvent(clientId: string, event: any) {
           final: true,
         });
 
-        const autoUi = autoLayout(text);
-        if (autoUi) {
-          state.currentUi = mergeSpecs(state.currentUi, autoUi, true);
-          send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
-        }
       }
       
       send(state.ws, { type: "chat.done", runId: payload.runId });
@@ -222,6 +217,24 @@ function handleGatewayEvent(clientId: string, event: any) {
   // Agent lifecycle events (tool calls, thinking, etc.)
   if (eventType.startsWith("agent.") || eventType.startsWith("tool.")) {
     send(state.ws, { type: "agent.event", eventType, data: payload });
+  }
+
+  // UIClaw plugin events → workspace panel
+  if (eventType === "uiclaw.ui.update") {
+    const spec = normalizeSpec(payload.spec ?? payload);
+    const replace = payload.replace ?? true;
+    state.currentUi = mergeSpecs(state.currentUi, spec, replace);
+    send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
+  }
+
+  if (eventType === "uiclaw.form.show") {
+    send(state.ws, {
+      type: "form.show",
+      formId: payload.formId,
+      title: payload.title,
+      description: payload.description,
+      fields: payload.fields,
+    });
   }
 
   // Forward everything else the frontend might want

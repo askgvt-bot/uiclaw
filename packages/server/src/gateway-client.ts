@@ -179,7 +179,7 @@ export class GatewayClient {
   }
 
   private contextSent = false;
-  private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user is in a browser with a chat panel (left) and a workspace panel (right). Your responses automatically render as rich UI: markdown tables become DataTables, code blocks get styled, images show in grids. For full layout control, embed :::uiclaw JSON blocks with components: Stack, Card, DataTable, Canvas (custom HTML), ImageGrid, ColorPalette, Markdown. You do NOT need paired nodes, canvas tool, or any workarounds — the web UI IS your render surface. Be creative with visual responses.]\n\n`;
+  private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user sees a chat panel (left) and a workspace panel (right). Keep chat responses conversational. For visual/structured content, use the uiclaw_render tool to push UI specs to the workspace panel — this keeps chat clean and workspace rich. Available tools: uiclaw_render (component tree: Stack, Card, DataTable, Canvas, ImageGrid, ColorPalette, Markdown), uiclaw_canvas (custom HTML), uiclaw_form (collect user input). You do NOT need paired nodes or canvas workarounds — the web UI IS your render surface.]\n\n`;
 
   async sendMessage(text: string, sessionKey?: string): Promise<string> {
     const key = randomUUID().slice(0, 12);
