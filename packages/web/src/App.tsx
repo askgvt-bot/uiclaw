@@ -7,6 +7,7 @@ type ChatMessage = {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  streaming?: boolean;
 };
 
 type FormSpec = {
@@ -34,6 +35,7 @@ function useUIClaw() {
   const [uiSpec, setUiSpec] = useState<UIComponent | null>(null);
   const [activeForm, setActiveForm] = useState<FormSpec | null>(null);
   const [agentEvents, setAgentEvents] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -57,16 +59,61 @@ function useUIClaw() {
         case "gateway.disconnected":
           setConnectionState("disconnected");
           break;
+        case "chat.delta":
+          // Streaming: update or create a streaming message
+          setMessages((prev) => {
+            const streamId = `stream_${msg.runId}`;
+            const existing = prev.findIndex((m) => m.id === streamId);
+            const entry = {
+              id: streamId,
+              role: msg.role ?? "assistant",
+              content: msg.content,
+              timestamp: new Date().toISOString(),
+              streaming: true,
+            };
+            if (existing >= 0) {
+              const updated = [...prev];
+              updated[existing] = entry;
+              return updated;
+            }
+            return [...prev, entry];
+          });
+          setIsLoading(true);
+          break;
         case "chat.message":
+          setMessages((prev) => {
+            // If this is a final message, replace any streaming message
+            const filtered = prev.filter((m) => !m.streaming);
+            return [
+              ...filtered,
+              {
+                id: `msg_${Date.now()}`,
+                role: msg.role,
+                content: msg.content,
+                timestamp: msg.timestamp ?? new Date().toISOString(),
+              },
+            ];
+          });
+          setIsLoading(false);
+          break;
+        case "chat.done":
+          // Mark streaming complete - finalize any remaining stream messages
+          setMessages((prev) =>
+            prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+          );
+          setIsLoading(false);
+          break;
+        case "chat.error":
           setMessages((prev) => [
             ...prev,
             {
-              id: `msg_${Date.now()}`,
-              role: msg.role,
-              content: msg.content,
-              timestamp: msg.timestamp,
+              id: `err_${Date.now()}`,
+              role: "system",
+              content: `⚠️ ${msg.error}`,
+              timestamp: new Date().toISOString(),
             },
           ]);
+          setIsLoading(false);
           break;
         case "chat.history":
           // Load initial history

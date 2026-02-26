@@ -134,7 +134,7 @@ export class GatewayClient {
       // Fetch chat history for main session
       try {
         const history = await this.request("chat.history", {
-          sessionKey: this.opts.sessionKey ?? "main:default",
+          sessionKey: this.opts.sessionKey ?? "uiclaw",
           limit: 50,
         });
         console.log("[Gateway] History:", JSON.stringify(history).slice(0, 300));
@@ -187,17 +187,20 @@ export class GatewayClient {
 
   async sendMessage(text: string, sessionKey?: string): Promise<string> {
     const key = randomUUID().slice(0, 12);
-    await this.request("chat.send", {
-      sessionKey: sessionKey ?? this.opts.sessionKey,
+    const sk = sessionKey ?? this.opts.sessionKey ?? "uiclaw";
+    console.log(`[Gateway] chat.send → session=${sk}, key=${key}`);
+    const result = await this.request("chat.send", {
+      sessionKey: sk,
       message: text,
       deliver: false,
       idempotencyKey: key,
     });
+    console.log(`[Gateway] chat.send result:`, JSON.stringify(result).slice(0, 200));
     return key;
   }
 
   async abort(sessionKey?: string): Promise<void> {
-    await this.request("chat.abort", { sessionKey: sessionKey ?? this.opts.sessionKey });
+    await this.request("chat.abort", { sessionKey: sessionKey ?? this.opts.sessionKey ?? "main" });
   }
 
   private scheduleReconnect() {
