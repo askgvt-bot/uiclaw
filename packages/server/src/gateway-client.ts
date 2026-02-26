@@ -105,7 +105,7 @@ export class GatewayClient {
         mode: "webchat",
       },
       role: "operator",
-      scopes: ["operator.read", "operator.write"],
+      scopes: ["operator.read", "operator.write", "operator.admin"],
       caps: [],
       commands: [],
       permissions: {},
@@ -122,19 +122,23 @@ export class GatewayClient {
       console.log("[Gateway] Connected!", JSON.stringify(result).slice(0, 200));
       this.opts.onConnected();
 
-      // Fetch sessions list
+      const sk = this.opts.sessionKey ?? "uiclaw";
+
+      // Inject system context so the agent knows it's in a web UI
       try {
-        const sessions = await this.request("sessions.list", {});
-        console.log("[Gateway] Sessions:", JSON.stringify(sessions).slice(0, 300));
-        this.opts.onEvent({ type: "sessions.list", sessions: sessions?.sessions ?? [] });
+        await this.request("chat.inject", {
+          sessionKey: sk,
+          message: `[UIClaw Context] You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user is in a browser with a chat panel (left) and a workspace panel (right). Your responses automatically render as rich UI: markdown tables become interactive DataTables, code blocks get styled with language labels, images show in grids, and color hex codes become swatches. For full layout control, embed :::uiclaw JSON blocks with components: Stack, Card, DataTable, Canvas (custom HTML), ImageGrid, ColorPalette, Markdown. You do NOT need paired nodes, canvas tool, or any workarounds — the web UI IS your render surface. Be creative with visual responses.`,
+        });
+        console.log("[Gateway] Injected UIClaw context");
       } catch (e: any) {
-        console.log("[Gateway] Sessions list failed:", e.message);
+        console.log("[Gateway] Context inject failed:", e.message);
       }
 
-      // Fetch chat history for main session
+      // Fetch chat history
       try {
         const history = await this.request("chat.history", {
-          sessionKey: this.opts.sessionKey ?? "uiclaw",
+          sessionKey: sk,
           limit: 50,
         });
         console.log("[Gateway] History:", JSON.stringify(history).slice(0, 300));

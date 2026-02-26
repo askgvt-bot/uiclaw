@@ -1,98 +1,48 @@
----
-name: uiclaw
-description: "Render rich dynamic web interfaces for users via the UIClaw web UI. Use when the user is connected through the UIClaw channel and you want to display structured layouts, forms, data tables, charts, or interactive content."
-metadata:
-  openclaw:
-    emoji: "✨"
----
+# UIClaw Skill
 
-# UIClaw — Dynamic Web Interfaces
+UIClaw provides a rich web UI for OpenClaw agents at **https://ui.gvtbot.net**
 
-When a user is connected via the UIClaw web channel, you have access to tools that render rich UI in their browser alongside the chat conversation.
+## How It Works
 
-## Available Tools
+When users chat through UIClaw, your responses automatically render as rich UI:
+- **Tables** → interactive DataTable component
+- **Code blocks** → styled code with language labels  
+- **Images** → ImageGrid gallery
+- **Color hex codes** → ColorPalette swatches
+- **Markdown** → formatted text with headers, bold, lists, links
 
-### `uiclaw_render` — Push a layout to the workspace
+## Explicit UI Specs
 
-Use this to display structured content. The spec is a component tree:
+For full control, embed `:::uiclaw` blocks in your response:
 
-```json
+```
+:::uiclaw
 {
   "type": "Stack",
   "children": [
-    { "type": "Markdown", "content": "# Research Results\nHere's what I found:" },
-    {
-      "type": "DataTable",
-      "columns": ["Company", "Revenue", "Employees"],
-      "rows": [
-        ["Apple", "$394B", "164,000"],
-        ["Google", "$307B", "182,000"]
-      ]
-    },
-    {
-      "type": "Card",
-      "title": "Key Insight",
-      "content": "Apple leads in revenue per employee."
-    }
+    { "type": "Card", "title": "Revenue", "icon": "💰", "content": "$2.3M ARR" },
+    { "type": "DataTable", "columns": ["Q", "Revenue"], "rows": [["Q1", "$500K"], ["Q2", "$680K"]] }
   ]
 }
+:::
 ```
 
-**Component types:**
-- `Stack` — Container with `children` (vertical by default, set `direction: "horizontal"`)
-- `Markdown` — Rendered markdown (`content` field)
-- `Card` — Titled card (`title`, `content`, optional `icon`)
-- `DataTable` — Table with `columns` (string[]) and `rows` (string[][])
-- `Canvas` — Custom HTML (`html` field, optional `height`)
-- `ImageGrid` — Array of `images` with `url` and `caption`
-- `ColorPalette` — Array of `colors` with `hex` and `name`
-- `Columns` — Side-by-side layout with `columns` array of child components
-- `LogView` — Array of `logs` (string[])
+## Available Components
 
-### `uiclaw_form` — Collect structured input
+| Type | Props | Use For |
+|------|-------|---------|
+| `Stack` | `direction` (vertical/horizontal), `children` | Layout container |
+| `Markdown` | `content` | Formatted text |
+| `Card` | `title`, `content`, `icon`, `url` | Info cards |
+| `DataTable` | `columns`, `rows` | Tabular data |
+| `Canvas` | `html`, `height`, `title` | Custom HTML/SVG |
+| `ImageGrid` | `images` [{src, alt}], `columns` | Image galleries |
+| `ColorPalette` | `colors` [{hex, label}] | Color swatches |
 
-Use this when you need specific information from the user before proceeding:
+## Session
 
-```json
-{
-  "title": "Project Setup",
-  "description": "Tell me about your project so I can help.",
-  "fields": [
-    { "id": "name", "label": "Project Name", "type": "text", "required": true },
-    { "id": "type", "label": "Project Type", "type": "select", "options": ["Web App", "Mobile", "API", "CLI"] },
-    { "id": "description", "label": "Brief Description", "type": "textarea", "placeholder": "What does it do?" },
-    { "id": "hasDesign", "label": "Do you have existing designs?", "type": "checkbox" }
-  ]
-}
-```
+UIClaw uses session key `"uiclaw"` — separate from WhatsApp/Telegram sessions.
 
-**Field types:** text, textarea, select, number, email, url, checkbox, radio, color, date
+## Architecture
 
-The tool blocks until the user submits the form, then returns their answers as JSON.
-
-### `uiclaw_canvas` — Render custom HTML
-
-For charts, visualizations, or anything custom:
-
-```json
-{
-  "html": "<div style='padding:20px'><h2>Chart</h2><canvas id='myChart'></canvas></div>",
-  "height": 300,
-  "title": "Sales Data"
-}
-```
-
-## When to use these tools
-
-- **Always use `uiclaw_form`** before creative tasks (logos, designs, content) to collect requirements
-- **Use `uiclaw_render`** when displaying structured data, comparisons, or multi-section results
-- **Use `uiclaw_canvas`** for custom visualizations, charts, or interactive content
-- **Don't use these tools** for simple text responses — just reply normally in chat
-
-## Tips
-
-- Build layouts progressively — start with key info, add details
-- Use `Stack` with `direction: "horizontal"` for side-by-side comparisons
-- DataTable is great for structured data (pricing, specs, comparisons)
-- Markdown component supports full markdown including code blocks
-- Canvas HTML gets dark-mode CSS injected automatically
+Browser → UIClaw Server (Docker, port 3800) → OpenClaw Gateway WebSocket (protocol v3)
