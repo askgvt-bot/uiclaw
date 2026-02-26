@@ -1,0 +1,54 @@
+{
+  "name": "uiclaw",
+  "version": "0.1.0",
+  "description": "Rich dynamic web interfaces for OpenClaw agents",
+  "type": "module",
+  "bin": {
+    "uiclaw": "./bin/uiclaw.js"
+  },
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter @uiclaw/server dev\" \"pnpm --filter @uiclaw/web dev\"",
+    "build": "pnpm --filter @uiclaw/web build && pnpm --filter @uiclaw/server build",
+    "start": "node bin/uiclaw.js start"
+  },
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "ui",
+    "web",
+    "dynamic-ui",
+    "ai-agent"
+  ],
+  "author": "Nick Halstead",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nicholashalstead/uiclaw"
+  },
+  "openclaw": {
+    "extensions": [
+      "./extensions/uiclaw/index.ts"
+    ],
+    "channel": {
+      "id": "uiclaw",
+      "label": "UIClaw",
+      "selectionLabel": "UIClaw (Web UI)",
+      "docsPath": "/channels/uiclaw",
+      "blurb": "Rich dynamic web interfaces for OpenClaw agents.",
+      "order": 90,
+      "aliases": [
+        "ui",
+        "webui"
+      ]
+    },
+    "install": {
+      "npmSpec": "uiclaw",
+      "defaultChoice": "npm"
+    }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
