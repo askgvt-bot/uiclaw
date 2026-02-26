@@ -169,6 +169,37 @@ function useUIClaw() {
   return { connectionState, messages, uiSpec, activeForm, agentEvents, sendMessage, submitForm };
 }
 
+// ─── Chat Markdown ───────────────────────────────────────────
+function ChatMarkdown({ content }: { content: string }) {
+  // Render code blocks, bold, italic, inline code, lists, links in chat bubbles
+  const codeBlocks: string[] = [];
+  let html = content.replace(/```(\w*)\n([\s\S]*?)```/gm, (_m, lang, code) => {
+    const escaped = code.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<div class="my-2 bg-slate-900/60 rounded-lg overflow-hidden">` +
+      (lang ? `<div class="px-2 py-1 text-[10px] text-slate-500 border-b border-slate-700/40 font-mono">${lang}</div>` : "") +
+      `<pre class="p-2 overflow-x-auto text-xs leading-relaxed font-mono text-slate-300 m-0 whitespace-pre"><code>${escaped}</code></pre></div>`
+    );
+    return `__CB${idx}__`;
+  });
+
+  html = html
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code class="px-1 py-0.5 bg-slate-700/50 rounded text-amber-300 text-xs font-mono">$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-sky-400 underline">$1</a>')
+    .replace(/^[-*•] (.+)$/gm, '<div class="flex gap-1.5 ml-1"><span class="text-slate-500">•</span><span>$1</span></div>')
+    .replace(/\n\n/g, '<div class="h-2"></div>')
+    .replace(/\n/g, "<br />");
+
+  for (let i = 0; i < codeBlocks.length; i++) {
+    html = html.replace(`__CB${i}__`, codeBlocks[i]);
+  }
+
+  return <div className="leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 // ─── Main App ────────────────────────────────────────────────
 export function App() {
   const { connectionState, messages, uiSpec, activeForm, agentEvents, sendMessage, submitForm } = useUIClaw();
@@ -229,7 +260,7 @@ export function App() {
                     ? "bg-indigo-600/40 text-slate-200"
                     : "bg-slate-800/60 text-slate-300"
                 }`}>
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                  <ChatMarkdown content={msg.content} />
                   <div className="text-[10px] text-slate-500 mt-1">
                     {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ""}
                   </div>

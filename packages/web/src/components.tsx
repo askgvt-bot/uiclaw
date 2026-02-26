@@ -69,22 +69,43 @@ function ColumnsComponent({ component }: { component: UIComponent }) {
 // ─── Markdown ────────────────────────────────────────────────
 function MarkdownComponent({ component }: { component: UIComponent }) {
   const content = String(component.content ?? "");
-  // Simple markdown rendering (headers, bold, italic, links, code, lists)
-  const html = content
+  
+  // Process code blocks first — replace with placeholders, render separately
+  const codeBlocks: string[] = [];
+  let processed = content.replace(/```(\w*)\n([\s\S]*?)```/gm, (_match, lang, code) => {
+    const escaped = code.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const idx = codeBlocks.length;
+    codeBlocks.push(
+      `<div class="my-3 bg-slate-900/80 border border-slate-700/50 rounded-lg overflow-hidden">` +
+      (lang ? `<div class="px-3 py-1.5 text-[10px] text-slate-500 border-b border-slate-700/50 font-mono">${lang}</div>` : "") +
+      `<pre class="p-3 overflow-x-auto text-[13px] leading-relaxed font-mono text-slate-300 m-0"><code>${escaped}</code></pre></div>`
+    );
+    return `__CODE_BLOCK_${idx}__`;
+  });
+  
+  // Markdown transforms
+  processed = processed
     .replace(/^### (.+)$/gm, '<h3 class="text-lg font-semibold text-slate-200 mt-4 mb-2">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-slate-100 mt-5 mb-3">$1</h2>')
     .replace(/^# (.+)$/gm, '<h1 class="text-2xl font-bold text-white mt-6 mb-4">$1</h1>')
     .replace(/\*\*(.+?)\*\*/g, '<strong class="text-slate-100">$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 bg-slate-800 rounded text-amber-300 text-xs">$1</code>')
+    .replace(/`([^`]+)`/g, '<code class="px-1.5 py-0.5 bg-slate-800 rounded text-amber-300 text-xs font-mono">$1</code>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="text-sky-400 hover:text-sky-300 underline">$1</a>')
-    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 text-slate-300">$1</li>')
+    .replace(/^[-*•] (.+)$/gm, '<div class="flex gap-2 ml-2"><span class="text-slate-500">•</span><span class="text-slate-300">$1</span></div>')
+    .replace(/^\d+\.\s+(.+)$/gm, '<div class="ml-2 text-slate-300">$1</div>')
+    .replace(/\n\n/g, '<div class="h-3"></div>')
     .replace(/\n/g, "<br />");
+  
+  // Restore code blocks
+  for (let i = 0; i < codeBlocks.length; i++) {
+    processed = processed.replace(`__CODE_BLOCK_${i}__`, codeBlocks[i]);
+  }
 
   return (
     <div
       className="prose prose-invert max-w-none text-slate-300 text-sm leading-relaxed"
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: processed }}
     />
   );
 }
@@ -179,18 +200,21 @@ function CanvasComponent({ component }: { component: UIComponent }) {
 
 // ─── ImageGrid ───────────────────────────────────────────────
 function ImageGridComponent({ component }: { component: UIComponent }) {
-  const images = (component.images as Array<{ url: string; caption?: string }>) ?? [];
+  const images = (component.images as Array<{ url?: string; src?: string; caption?: string; alt?: string }>) ?? [];
   const isImageUrl = (url: string) => /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {images.map((image, i) => (
+      {images.map((image, i) => {
+        const imgUrl = image.url ?? image.src ?? "";
+        const caption = image.caption ?? image.alt ?? "";
+        return (
         <div key={i} className="bg-slate-800/30 border border-slate-700/50 rounded-xl overflow-hidden hover:border-sky-500/50 transition-all">
-          {isImageUrl(image.url) ? (
+          {isImageUrl(imgUrl) ? (
             <div className="aspect-square overflow-hidden bg-slate-900/50">
               <img
-                src={image.url}
-                alt={image.caption || ""}
+                src={imgUrl}
+                alt={caption}
                 className="w-full h-full object-cover"
                 loading="lazy"
                 onError={(e) => {
@@ -200,22 +224,23 @@ function ImageGridComponent({ component }: { component: UIComponent }) {
               />
             </div>
           ) : (
-            <a href={image.url} target="_blank" rel="noopener noreferrer" className="block p-4 hover:bg-slate-700/30 transition-colors">
+            <a href={imgUrl} target="_blank" rel="noopener noreferrer" className="block p-4 hover:bg-slate-700/30 transition-colors">
               <div className="flex items-center gap-3">
                 <div className="text-2xl">🔗</div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-slate-300 truncate">{image.caption || image.url}</div>
-                  <div className="text-xs text-slate-500 truncate">{(() => { try { return new URL(image.url).hostname; } catch { return image.url; } })()}</div>
+                  <div className="text-sm text-slate-300 truncate">{caption || imgUrl}</div>
+                  <div className="text-xs text-slate-500 truncate">{(() => { try { return new URL(imgUrl).hostname; } catch { return imgUrl; } })()}</div>
                 </div>
                 <div className="text-slate-500">↗</div>
               </div>
             </a>
           )}
-          {image.caption && isImageUrl(image.url) && (
-            <div className="p-3 text-sm text-slate-300 border-t border-slate-700/50">{image.caption}</div>
+          {caption && isImageUrl(imgUrl) && (
+            <div className="p-3 text-sm text-slate-300 border-t border-slate-700/50">{caption}</div>
           )}
         </div>
-      ))}
+      );
+      })}
     </div>
   );
 }

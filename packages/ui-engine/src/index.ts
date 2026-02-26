@@ -2,7 +2,9 @@
  * UIClaw UI Engine
  * 
  * Transforms agent text responses into rich UI component specs.
- * Works passively (auto-detects content type) and actively (explicit specs from tools).
+ * Two modes:
+ * 1. Explicit: agent embeds :::uiclaw JSON blocks
+ * 2. Auto: detects tables, code, lists, URLs, images → rich components
  */
 
 export type UIComponent = {
@@ -15,99 +17,236 @@ export type UISpec = UIComponent & {
   children?: UIComponent[];
 };
 
+let _counter = 0;
+const nextId = () => `c_${++_counter}`;
+
 /**
- * Auto-generate a UI spec from an agent's text response.
- * Analyzes the content and picks appropriate components.
+ * Extract explicit :::uiclaw JSON blocks from text.
+ * Format: :::uiclaw\n{...JSON spec...}\n:::
  */
-export function autoLayout(text: string, toolResults?: Record<string, unknown>): UISpec | null {
-  if (!text || text.length < 50) return null; // Too short for rich UI
-  
-  const components: UIComponent[] = [];
-  let id = 0;
-  const nextId = () => `auto_${++id}`;
-
-  // Detect lists/bullet points → Card components
-  const listMatch = text.match(/(?:^|\n)((?:\s*[-•*]\s+.+\n?){3,})/gm);
-  
-  // Detect tables → DataTable
-  const tableMatch = text.match(/\|.+\|.+\|\n\|[-\s|]+\|\n(\|.+\|\n?)+/gm);
-  
-  // Detect code blocks → Canvas
-  const codeMatch = text.match(/```[\s\S]+?```/gm);
-  
-  // Detect numbered items (like "1. Something\n2. Something") → ordered content
-  const numberedMatch = text.match(/(?:^|\n)((?:\s*\d+[.)]\s+.+\n?){3,})/gm);
-  
-  // Detect URLs → link cards
-  const urlMatch = text.match(/https?:\/\/[^\s)]+/gm);
-
-  // If there are tool results with structured data, prefer DataTable
-  if (toolResults) {
-    for (const [toolName, result] of Object.entries(toolResults)) {
-      const data = result as any;
-      if (data?.results && Array.isArray(data.results)) {
-        // Search results → cards with links
-        components.push({
-          id: nextId(),
-          type: "Stack",
-          children: data.results.slice(0, 5).map((r: any, i: number) => ({
-            id: nextId(),
-            type: "Card",
-            title: r.title || `Result ${i + 1}`,
-            content: r.description || r.snippet || "",
-            url: r.url,
-          })),
-        });
-      }
+function extractExplicitSpecs(text: string): { specs: UISpec[]; cleanText: string } {
+  const specs: UISpec[] = [];
+  const cleanText = text.replace(/:::uiclaw\n([\s\S]*?)\n:::/g, (_, json) => {
+    try {
+      const spec = JSON.parse(json.trim());
+      specs.push(normalizeSpec(spec));
+    } catch (e) {
+      // Invalid JSON, leave as text
+      return _;
     }
-  }
-
-  if (tableMatch) {
-    for (const table of tableMatch) {
-      const lines = table.trim().split("\n").filter(l => !l.match(/^\|[-\s|]+\|$/));
-      const headers = lines[0]?.split("|").filter(Boolean).map(s => s.trim()) ?? [];
-      const rows = lines.slice(1).map(line => 
-        line.split("|").filter(Boolean).map(s => s.trim())
-      );
-      components.push({
-        id: nextId(),
-        type: "DataTable",
-        columns: headers,
-        rows,
-      });
-    }
-  }
-
-  // Always include the full markdown as base
-  components.unshift({
-    id: nextId(),
-    type: "Markdown",
-    content: text,
-  });
-
-  if (components.length <= 1) return null; // Just markdown, not worth a layout
-
-  return {
-    id: "auto-layout",
-    type: "Stack",
-    children: components,
-  };
+    return "";
+  }).trim();
+  return { specs, cleanText };
 }
 
 /**
- * Validate and normalize a UI spec from an agent tool call.
+ * Detect markdown tables → DataTable components
+ */
+function detectTables(text: string): UIComponent[] {
+  const components: UIComponent[] = [];
+  const tableRegex = /\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/gm;
+  let match;
+  while ((match = tableRegex.exec(text)) !== null) {
+    const headerLine = match[1];
+    const bodyLines = match[2].trim().split("\n");
+    const headers = headerLine.split("|").map(s => s.trim()).filter(Boolean);
+    const rows = bodyLines.map(line =>
+      line.split("|").map(s => s.trim()).filter(Boolean)
+    );
+    components.push({
+      id: nextId(),
+      type: "DataTable",
+      columns: headers,
+      rows,
+    });
+  }
+  return components;
+}
+
+/**
+ * Detect code blocks → Canvas components with syntax highlighting
+ */
+function detectCodeBlocks(text: string): UIComponent[] {
+  const components: UIComponent[] = [];
+  const codeRegex = /```(\w*)\n([\s\S]*?)```/gm;
+  let match;
+  while ((match = codeRegex.exec(text)) !== null) {
+    const lang = match[1] || "text";
+    const code = match[2].trim();
+    
+    // HTML/SVG code → render as Canvas
+    if (lang === "html" || lang === "svg" || code.includes("<svg") || code.includes("<!DOCTYPE")) {
+      components.push({
+        id: nextId(),
+        type: "Canvas",
+        html: code,
+        height: 400,
+        title: lang === "svg" ? "SVG Preview" : "HTML Preview",
+      });
+    } else {
+      // Code block → styled code display
+      const escaped = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      components.push({
+        id: nextId(),
+        type: "Canvas",
+        html: `<pre style="background:#1e293b;color:#e2e8f0;padding:16px;border-radius:8px;overflow-x:auto;font-family:'Fira Code',monospace;font-size:13px;line-height:1.5;margin:0"><code>${escaped}</code></pre>`,
+        height: Math.min(60 + code.split("\n").length * 22, 500),
+        title: lang !== "text" ? lang : undefined,
+      });
+    }
+  }
+  return components;
+}
+
+/**
+ * Detect image URLs → ImageGrid
+ */
+function detectImages(text: string): UIComponent[] {
+  const imgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp|svg)[^\s)]*)\)/gm;
+  const images: { alt: string; url: string }[] = [];
+  let match;
+  while ((match = imgRegex.exec(text)) !== null) {
+    images.push({ alt: match[1], url: match[2] });
+  }
+  
+  // Also check for raw image URLs
+  const rawImgRegex = /(?:^|\s)(https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s)]*)?)/gm;
+  while ((match = rawImgRegex.exec(text)) !== null) {
+    if (!images.some(i => i.url === match[1])) {
+      images.push({ alt: "", url: match[1] });
+    }
+  }
+  
+  if (images.length === 0) return [];
+  return [{
+    id: nextId(),
+    type: "ImageGrid",
+    images: images.map(i => ({ src: i.url, alt: i.alt })),
+    columns: images.length <= 2 ? images.length : 3,
+  }];
+}
+
+/**
+ * Detect bullet lists with structure → Card grid
+ */
+function detectStructuredList(text: string): UIComponent[] {
+  // Look for patterns like "### Title\n- Point 1\n- Point 2" repeated
+  const sectionRegex = /(?:^|\n)###?\s+(.+)\n((?:\s*[-•*]\s+.+\n?)+)/gm;
+  const sections: { title: string; items: string[] }[] = [];
+  let match;
+  while ((match = sectionRegex.exec(text)) !== null) {
+    const title = match[1].trim();
+    const items = match[2].trim().split("\n").map(l => l.replace(/^\s*[-•*]\s+/, "").trim()).filter(Boolean);
+    sections.push({ title, items });
+  }
+  
+  if (sections.length < 2) return [];
+  return [{
+    id: nextId(),
+    type: "Stack",
+    direction: "horizontal",
+    children: sections.map(s => ({
+      id: nextId(),
+      type: "Card",
+      title: s.title,
+      content: s.items.map(i => `• ${i}`).join("\n"),
+    })),
+  }];
+}
+
+/**
+ * Detect color values → ColorPalette
+ */
+function detectColors(text: string): UIComponent[] {
+  const hexRegex = /#(?:[0-9a-fA-F]{3}){1,2}\b/g;
+  const colors = [...new Set(text.match(hexRegex) ?? [])];
+  if (colors.length < 3) return [];
+  return [{
+    id: nextId(),
+    type: "ColorPalette",
+    colors: colors.map(c => ({ hex: c, label: c })),
+  }];
+}
+
+/**
+ * Detect URLs → LinkCards
+ */
+function detectLinks(text: string): UIComponent[] {
+  // Named links: [text](url)
+  const namedRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gm;
+  const links: { title: string; url: string }[] = [];
+  let match;
+  while ((match = namedRegex.exec(text)) !== null) {
+    links.push({ title: match[1], url: match[2] });
+  }
+  
+  if (links.length < 2) return [];
+  return [{
+    id: nextId(),
+    type: "Stack",
+    direction: "horizontal",
+    children: links.slice(0, 6).map(l => ({
+      id: nextId(),
+      type: "Card",
+      title: l.title,
+      url: l.url,
+      content: new URL(l.url).hostname,
+    })),
+  }];
+}
+
+/**
+ * Auto-generate a UI spec from an agent's text response.
+ */
+export function autoLayout(text: string): UISpec | null {
+  if (!text || text.length < 30) return null;
+  
+  // 1. Check for explicit :::uiclaw blocks
+  const { specs, cleanText } = extractExplicitSpecs(text);
+  if (specs.length > 0) {
+    return specs.length === 1 ? specs[0] : {
+      id: "explicit-layout",
+      type: "Stack",
+      children: specs,
+    };
+  }
+
+  // 2. Auto-detect rich content
+  // Markdown component handles code blocks, bold, lists etc natively.
+  // Only add extra components for tables, images, colors, links.
+  const extras: UIComponent[] = [];
+  
+  const tables = detectTables(text);
+  const images = detectImages(text);
+  const colors = detectColors(text);
+  
+  extras.push(...tables, ...images, ...colors);
+  
+  // For any response > 100 chars, render as rich Markdown (+ extras)
+  if (text.length > 100 || extras.length > 0) {
+    const children: UIComponent[] = [
+      { id: nextId(), type: "Markdown", content: cleanText || text },
+      ...extras,
+    ];
+    return {
+      id: "auto-layout",
+      type: "Stack",
+      children,
+    };
+  }
+  
+  return null;
+}
+
+/**
+ * Validate and normalize a UI spec.
  */
 export function normalizeSpec(spec: any): UISpec {
   if (!spec) return { id: "empty", type: "Stack", children: [] };
   
-  // Ensure all components have IDs
-  let counter = 0;
   function ensureIds(node: any): UIComponent {
-    if (!node.id) node.id = `comp_${++counter}`;
+    if (!node.id) node.id = nextId();
     if (node.children) node.children = node.children.map(ensureIds);
-    if (node.columns && Array.isArray(node.columns) && node.columns[0]?.type) {
-      node.columns = node.columns.map(ensureIds);
-    }
     return node;
   }
   
@@ -115,12 +254,11 @@ export function normalizeSpec(spec: any): UISpec {
 }
 
 /**
- * Merge a new spec into an existing one (for append mode).
+ * Merge specs (append or replace).
  */
 export function mergeSpecs(existing: UISpec | null, incoming: UISpec, replace: boolean): UISpec {
   if (replace || !existing) return incoming;
   
-  // Append incoming children to existing stack
   if (existing.type === "Stack" && incoming.type === "Stack") {
     return {
       ...existing,
@@ -128,7 +266,6 @@ export function mergeSpecs(existing: UISpec | null, incoming: UISpec, replace: b
     };
   }
   
-  // Wrap both in a stack
   return {
     id: "merged",
     type: "Stack",
