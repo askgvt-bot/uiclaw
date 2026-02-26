@@ -124,17 +124,6 @@ export class GatewayClient {
 
       const sk = this.opts.sessionKey ?? "uiclaw";
 
-      // Inject system context so the agent knows it's in a web UI
-      try {
-        await this.request("chat.inject", {
-          sessionKey: sk,
-          message: `[UIClaw Context] You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user is in a browser with a chat panel (left) and a workspace panel (right). Your responses automatically render as rich UI: markdown tables become interactive DataTables, code blocks get styled with language labels, images show in grids, and color hex codes become swatches. For full layout control, embed :::uiclaw JSON blocks with components: Stack, Card, DataTable, Canvas (custom HTML), ImageGrid, ColorPalette, Markdown. You do NOT need paired nodes, canvas tool, or any workarounds — the web UI IS your render surface. Be creative with visual responses.`,
-        });
-        console.log("[Gateway] Injected UIClaw context");
-      } catch (e: any) {
-        console.log("[Gateway] Context inject failed:", e.message);
-      }
-
       // Fetch chat history
       try {
         const history = await this.request("chat.history", {
@@ -189,13 +178,24 @@ export class GatewayClient {
     });
   }
 
+  private contextSent = false;
+  private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user is in a browser with a chat panel (left) and a workspace panel (right). Your responses automatically render as rich UI: markdown tables become DataTables, code blocks get styled, images show in grids. For full layout control, embed :::uiclaw JSON blocks with components: Stack, Card, DataTable, Canvas (custom HTML), ImageGrid, ColorPalette, Markdown. You do NOT need paired nodes, canvas tool, or any workarounds — the web UI IS your render surface. Be creative with visual responses.]\n\n`;
+
   async sendMessage(text: string, sessionKey?: string): Promise<string> {
     const key = randomUUID().slice(0, 12);
     const sk = sessionKey ?? this.opts.sessionKey ?? "uiclaw";
+    
+    // Prepend context to first message only
+    let message = text;
+    if (!this.contextSent) {
+      message = GatewayClient.CONTEXT + text;
+      this.contextSent = true;
+    }
+    
     console.log(`[Gateway] chat.send → session=${sk}, key=${key}`);
     const result = await this.request("chat.send", {
       sessionKey: sk,
-      message: text,
+      message,
       deliver: false,
       idempotencyKey: key,
     });
