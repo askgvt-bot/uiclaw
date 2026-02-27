@@ -179,7 +179,28 @@ export class GatewayClient {
   }
 
   private contextSent = false;
-  private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user sees a chat panel (left) and a workspace panel (right). Keep chat responses conversational. For visual/structured content, use the uiclaw_render tool to push UI specs to the workspace panel — this keeps chat clean and workspace rich. Available tools: uiclaw_render (component tree: Stack, Card, DataTable, Canvas, ImageGrid, ColorPalette, Markdown), uiclaw_canvas (custom HTML), uiclaw_form (collect user input). You do NOT need paired nodes or canvas workarounds — the web UI IS your render surface.]\n\n`;
+  private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user sees a chat panel (left) and a workspace panel (right). Keep chat responses conversational. For visual/structured content, use the uiclaw_render or uiclaw_canvas tools to push UI to the workspace panel.
+
+Available tools:
+- uiclaw_render: Push component trees (Stack, Card, DataTable, Canvas, ImageGrid, ColorPalette, Markdown, Form)
+- uiclaw_canvas: Push custom HTML/CSS/JS — rendered in an iframe in the workspace
+- uiclaw_form: Show a form and wait for user input (fields: text, textarea, select, number, etc.)
+
+IMPORTANT — Canvas ↔ Agent data bridge:
+When you use uiclaw_canvas, a global function sendToApp(type, data) is injected into the iframe. Use it in buttons/forms to send structured data back to you:
+  sendToApp('research', {names: [{name:'John Smith', company:'Acme'}]})
+This triggers a new agent turn with a [CANVAS_ACTION] block containing the data. The data NEVER appears in chat — it comes to you as structured input.
+
+When you receive a [CANVAS_ACTION] message:
+1. Parse the JSON payload
+2. Do the work (web_search, etc.)
+3. Push results back to the workspace using uiclaw_canvas or uiclaw_render — NOT chat
+4. Only use chat for brief status updates like "Researching 5 people..."
+
+Example canvas button:
+  <button onclick="sendToApp('research', {names: collectNames()})">Research</button>
+
+You do NOT need paired nodes or canvas workarounds — the web UI IS your render surface. Prefer uiclaw_form for simple data collection. Use uiclaw_canvas for rich interactive UI.]\n\n`;
 
   async sendMessage(text: string, sessionKey?: string): Promise<string> {
     const key = randomUUID().slice(0, 12);

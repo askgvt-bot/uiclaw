@@ -129,8 +129,12 @@ function useUIClaw() {
           }
           break;
         case "ui.update":
+        case "ui.replace":
+        case "ui.patch":
           setUiSpec(msg.spec);
+          setIsLoading(false);
           break;
+        case "ui.form":
         case "form.show":
           setActiveForm(msg);
           break;
@@ -146,9 +150,31 @@ function useUIClaw() {
     return () => wsRef.current?.close();
   }, [connect]);
 
+  // Listen for postMessage from Canvas iframes → forward as canvas.action via WS
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.source !== "uiclaw-canvas") return;
+      console.log("[UIClaw] Canvas action received:", e.data);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: "canvas.action",
+          actionType: e.data.type,
+          data: e.data.data,
+        }));
+        setIsLoading(true);
+        console.log("[UIClaw] Canvas action sent to server");
+      } else {
+        console.warn("[UIClaw] WS not open, can't send canvas action");
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
   const sendMessage = useCallback((text: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(JSON.stringify({ type: "chat.send", text }));
+    setIsLoading(true);
     setMessages((prev) => [
       ...prev,
       {
@@ -166,7 +192,7 @@ function useUIClaw() {
     setActiveForm(null);
   }, []);
 
-  return { connectionState, messages, uiSpec, activeForm, agentEvents, sendMessage, submitForm };
+  return { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, sendMessage, submitForm };
 }
 
 // ─── Chat Markdown ───────────────────────────────────────────
@@ -202,7 +228,7 @@ function ChatMarkdown({ content }: { content: string }) {
 
 // ─── Main App ────────────────────────────────────────────────
 export function App() {
-  const { connectionState, messages, uiSpec, activeForm, agentEvents, sendMessage, submitForm } = useUIClaw();
+  const { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, sendMessage, submitForm } = useUIClaw();
   const [input, setInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [chatWidth, setChatWidth] = useState(380);
@@ -303,7 +329,19 @@ export function App() {
         </div>
 
         {/* Workspace panel */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          {isLoading && (
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-10 flex items-center justify-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}} />
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
+                  <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
+                </div>
+                <span className="text-sm text-slate-400">Building UI...</span>
+              </div>
+            </div>
+          )}
           <div className="flex-1 p-6 overflow-auto">
             {uiSpec ? (
               <div className="space-y-4 animate-fadeIn">

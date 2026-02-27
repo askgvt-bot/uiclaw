@@ -177,9 +177,15 @@ function CanvasComponent({ component }: { component: UIComponent }) {
   const title = component.title as string | undefined;
 
   const darkStyles = `<style>body{background:#1e293b!important;color:#e2e8f0!important;font-family:system-ui,sans-serif;margin:0;padding:16px;} a{color:#38bdf8!important;} h1,h2,h3{color:#f1f5f9!important;}</style>`;
+  // Inject a postMessage bridge so Canvas HTML can send data back to the app
+  const bridge = `<script>
+    function sendToApp(type, data) {
+      window.parent.postMessage({ source: 'uiclaw-canvas', type, data }, '*');
+    }
+  </script>`;
   const html = rawHtml.includes("<head>")
-    ? rawHtml.replace("<head>", `<head>${darkStyles}`)
-    : `<html><head>${darkStyles}</head><body>${rawHtml}</body></html>`;
+    ? rawHtml.replace("<head>", `<head>${darkStyles}${bridge}`)
+    : `<html><head>${darkStyles}${bridge}</head><body>${rawHtml}</body></html>`;
 
   return (
     <div className="bg-slate-800/30 border border-slate-700/50 rounded-xl overflow-hidden">
@@ -190,7 +196,7 @@ function CanvasComponent({ component }: { component: UIComponent }) {
       )}
       <iframe
         srcDoc={html}
-        sandbox="allow-scripts"
+        sandbox="allow-scripts allow-same-origin"
         title={title ?? "Canvas"}
         style={{ width: "100%", height, border: "none", display: "block" }}
       />
@@ -201,7 +207,17 @@ function CanvasComponent({ component }: { component: UIComponent }) {
 // ─── ImageGrid ───────────────────────────────────────────────
 function ImageGridComponent({ component }: { component: UIComponent }) {
   const images = (component.images as Array<{ url?: string; src?: string; caption?: string; alt?: string }>) ?? [];
-  const isImageUrl = (url: string) => /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
+  // Accept common image extensions, data URIs, and known image CDNs (DALL-E, oaidalleapiprodscus, etc.)
+  const isImageUrl = (url: string) => 
+    /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url) ||
+    url.startsWith("data:image/") ||
+    url.includes("oaidalleapi") ||
+    url.includes("openai.com") ||
+    url.includes("blob.core.windows.net") ||
+    url.includes("githubusercontent.com") ||
+    url.includes("cloudflare") ||
+    url.includes("imgur.com") ||
+    (url.startsWith("http") && !url.includes(" ")); // Fallback: treat any clean URL as potential image
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

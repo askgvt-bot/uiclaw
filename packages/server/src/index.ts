@@ -7,7 +7,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, existsSync, createReadStream } from "fs";
 import { resolve, join } from "path";
 import { GatewayClient } from "./gateway-client.js";
 import { autoLayout, normalizeSpec, mergeSpecs, type UISpec } from "@uiclaw/ui-engine";
@@ -28,6 +28,64 @@ const clients = new Map<string, ClientState>();
 
 // ─── HTTP Server (static files) ──────────────────────────────
 const httpServer = createServer((req, res) => {
+  // ── API: Push UI specs from plugin tools ──
+  if (req.method === "POST" && req.url === "/api/ui") {
+    let body = "";
+    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+    req.on("end", () => {
+      try {
+        const data = JSON.parse(body);
+        // Transform local file paths to /files/ URLs so the browser can load them
+        const specStr = JSON.stringify(data.spec);
+        const fixedStr = specStr.replace(/"(\/Users\/[^"]+)"/g, (_match, path) => {
+          return `"/files${path}"`;
+        });
+        const spec = JSON.parse(fixedStr);
+        const type = data.type ?? "ui.replace"; // ui.replace or ui.form
+        console.log(`[API] /api/ui received: type=${type}, spec keys=${Object.keys(spec || {}).join(",")}`);
+        // Push to ALL connected browser clients
+        for (const [id, state] of clients) {
+          const ready = state.ws.readyState === 1; // WebSocket.OPEN
+          console.log(`[API] Sending to client ${id}, ws.readyState=${state.ws.readyState}, open=${ready}`);
+          send(state.ws, { ...data, type, spec });
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, clients: clients.size }));
+      } catch (e: any) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── Serve local files referenced by agents (images, etc.) ──
+  if (req.method === "GET" && req.url?.startsWith("/files/")) {
+    const filePath = decodeURIComponent(req.url.slice("/files".length)); // keeps leading /
+    // Security: only allow files under workspace or media dirs
+    const allowed = [
+      "/Users/nicholashalstead/.openclaw/workspace/",
+      "/Users/nicholashalstead/.openclaw/media/",
+      "/Users/nicholashalstead/Projects/",
+    ];
+    const resolved = resolve(filePath);
+    if (!allowed.some(p => resolved.startsWith(p)) || !existsSync(resolved)) {
+      res.writeHead(404);
+      res.end("Not found");
+      return;
+    }
+    const ext = resolved.split(".").pop()?.toLowerCase() ?? "";
+    const mimeTypes: Record<string, string> = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+      gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+      pdf: "application/pdf", mp3: "audio/mpeg", wav: "audio/wav",
+    };
+    res.writeHead(200, { "Content-Type": mimeTypes[ext] ?? "application/octet-stream" });
+    const stream = createReadStream(resolved);
+    stream.pipe(res);
+    return;
+  }
+
   const webDist = resolve(import.meta.dirname, "../../web/dist");
   
   if (!existsSync(webDist)) {
@@ -121,6 +179,21 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
       break;
     }
+
+    case "canvas.action": {
+      // Structured data from Canvas iframe — forward to agent without polluting chat
+      const payload = typeof msg.data === "string" ? msg.data : JSON.stringify(msg.data);
+      const actionType = msg.actionType ?? "action";
+      // Send as a hidden structured message — agent sees it, chat doesn't display it
+      const structured = `[CANVAS_ACTION type="${actionType}"]\n${payload}\n[/CANVAS_ACTION]`;
+      try {
+        console.log(`[UIClaw] Canvas action: type=${actionType}, payload=${payload.slice(0, 200)}`);
+        await state.gateway.sendMessage(structured);
+      } catch (e: any) {
+        send(state.ws, { type: "error", message: `Canvas action failed: ${e.message}` });
+      }
+      break;
+    }
   }
 }
 
@@ -131,6 +204,13 @@ function handleGatewayEvent(clientId: string, event: any) {
 
   const eventType = event.event ?? "";
   const payload = event.payload ?? {};
+
+  // Filter: only process events for the UIClaw session (ignore main/whatsapp/cron traffic)
+  const eventSessionKey = payload.sessionKey ?? event.sessionKey ?? "";
+  if (eventSessionKey && !eventSessionKey.includes("uiclaw")) {
+    return; // Not our session, ignore
+  }
+
   // Full raw event for debugging
   if (eventType === "chat") {
     console.log(`[Event] chat FULL:`, JSON.stringify(event).slice(0, 1000));

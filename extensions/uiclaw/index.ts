@@ -2,8 +2,27 @@
  * UIClaw — OpenClaw Plugin
  * 
  * Registers agent tools for rendering rich UI in the UIClaw web client.
- * The UIClaw server listens for gateway events and routes them to the browser.
+ * Tools push UI specs to the UIClaw server via HTTP POST.
  */
+
+const UICLAW_URL = process.env.UICLAW_URL ?? "http://127.0.0.1:3800";
+
+async function pushToUIClaw(data: Record<string, unknown>): Promise<void> {
+  console.log(`[UIClaw Plugin] pushToUIClaw called, url=${UICLAW_URL}/api/ui, keys=${Object.keys(data).join(",")}`);
+  console.log(`[UIClaw Plugin] spec: ${JSON.stringify(data).slice(0, 2000)}`);
+  try {
+    const res = await fetch(`${UICLAW_URL}/api/ui`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = await res.text();
+    console.log(`[UIClaw Plugin] Push result: ${res.status} ${body}`);
+  } catch (e: any) {
+    console.error(`[UIClaw Plugin] Push error: ${e.message}`);
+  }
+}
 
 // In-memory UI state per chat
 const uiSessions = new Map<string, { currentUi: any; pendingForms: Map<string, { resolve: (v: any) => void }> }>();
@@ -37,16 +56,16 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
       const session = getSession(chatId);
       session.currentUi = params.spec;
 
-      // Broadcast via gateway event — the UIClaw server picks this up
-      api.gateway?.broadcast?.("uiclaw.ui.update", {
-        chatId,
+      // Push UI spec to UIClaw server via HTTP
+      await pushToUIClaw({
+        type: "ui.replace",
         spec: params.spec,
         replace: params.replace ?? true,
       });
 
       return { content: [{ type: "text", text: `UI rendered (${countNodes(params.spec)} components)` }] };
     },
-  }, { optional: true });
+  });
 
   // ── Tool: uiclaw_canvas ─────────────────────────────────
   api.registerTool({
@@ -62,13 +81,14 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
       required: ["html"],
     },
     async execute(_ctx: any, params: { html: string; height?: number; title?: string }) {
-      api.gateway?.broadcast?.("uiclaw.ui.update", {
+      await pushToUIClaw({
+        type: "ui.replace",
         spec: { type: "Canvas", html: params.html, height: params.height ?? 400, title: params.title },
         replace: false,
       });
       return { content: [{ type: "text", text: "Canvas rendered." }] };
     },
-  }, { optional: true });
+  });
 
   // ── Tool: uiclaw_form ───────────────────────────────────
   api.registerTool({
@@ -104,7 +124,7 @@ Example: { "title": "Preferences", "fields": [{ "id": "style", "label": "Style",
       const chatId = typeof _ctx === "string" ? _ctx : _ctx?.sessionKey ?? "default";
       const session = getSession(chatId);
 
-      api.gateway?.broadcast?.("uiclaw.form.show", { chatId, formId, ...params });
+      await pushToUIClaw({ type: "ui.form", formId, ...params });
 
       const result = await new Promise<any>((resolve) => {
         session.pendingForms.set(formId, { resolve });
@@ -118,7 +138,7 @@ Example: { "title": "Preferences", "fields": [{ "id": "style", "label": "Style",
 
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
-  }, { optional: true });
+  });
 
   // ── RPC: form submit ────────────────────────────────────
   try {
