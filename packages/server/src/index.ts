@@ -56,7 +56,7 @@ const httpServer = createServer((req, res) => {
           send(state.ws, { ...data, type, spec });
         }
         // Auto-register the interface
-        if (type !== "ui.form" && spec) {
+        if (type !== "ui.form" && spec && !data.skipRegister) {
           autoRegisterInterface(spec as UISpec, data.title || data.description || null);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
