@@ -1,9 +1,7 @@
 /**
  * UIClaw — OpenClaw Plugin
  *
- * Context optimization: HTML/specs are saved to disk and only a summary
- * is returned to the agent context. Use uiclaw_read to recall code when
- * modifying an existing interface.
+ * HTML/specs saved to disk, only summaries in context.
  */
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
@@ -18,19 +16,18 @@ const INTERFACES_DIR = join(
 
 mkdirSync(INTERFACES_DIR, { recursive: true });
 
-function saveInterface(html: string, _title?: string): { id: string; path: string; lines: number } {
+function saveInterface(html: string): { id: string; path: string; lines: number } {
   const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
   const id = "ui_" + hash;
-  const filepath = join(INTERFACES_DIR, id + ".html");
-  writeFileSync(filepath, html);
-  return { id, path: filepath, lines: html.split("\n").length };
+  writeFileSync(join(INTERFACES_DIR, id + ".html"), html);
+  return { id, path: join(INTERFACES_DIR, id + ".html"), lines: html.split("\n").length };
 }
 
 function loadInterface(id: string): string | null {
-  const filepath = join(INTERFACES_DIR, id + ".html");
-  if (existsSync(filepath)) return readFileSync(filepath, "utf-8");
-  const filepath2 = join(INTERFACES_DIR, "ui_" + id + ".html");
-  if (existsSync(filepath2)) return readFileSync(filepath2, "utf-8");
+  for (const name of [id, "ui_" + id]) {
+    const fp = join(INTERFACES_DIR, name + ".html");
+    if (existsSync(fp)) return readFileSync(fp, "utf-8");
+  }
   return null;
 }
 
@@ -89,7 +86,7 @@ export default function register(api: any) {
     },
   });
 
-  // ── uiclaw_canvas ──
+  // ── uiclaw_canvas ── (saves to disk, returns summary)
   api.registerTool({
     name: "uiclaw_canvas",
     description: "Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk \u2014 only a summary stays in context.\n\nBEFORE BUILDING: Call uiclaw_read(id=\"list\") to check existing interfaces. If one matches, use uiclaw_load(id) to render it directly (zero context cost). Only use uiclaw_read(id) if you need to modify the code.\n\nTo modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.",
@@ -103,7 +100,7 @@ export default function register(api: any) {
       required: ["html"],
     },
     async execute(_ctx: any, params: { html: string; height?: number; title?: string }) {
-      var saved = saveInterface(params.html, params.title);
+      var saved = saveInterface(params.html);
       await pushToUIClaw({
         type: "ui.replace",
         spec: { type: "Canvas", html: params.html, height: params.height ?? 400, title: params.title },
@@ -111,10 +108,7 @@ export default function register(api: any) {
         title: params.title,
       });
       return {
-        content: [{
-          type: "text",
-          text: "Canvas rendered and saved.\n- ID: " + saved.id + "\n- Size: " + saved.lines + " lines\n- Title: " + (params.title ?? "untitled") + "\n\nUse uiclaw_read(\"" + saved.id + "\") to recall code for modifications.",
-        }],
+        content: [{ type: "text", text: "Canvas rendered and saved. ID: " + saved.id + " (" + saved.lines + " lines)" }],
       };
     },
   });
@@ -147,7 +141,7 @@ export default function register(api: any) {
     },
   });
 
-  // ── uiclaw_load ──
+  // ── uiclaw_load ── (renders from disk, zero context cost)
   api.registerTool({
     name: "uiclaw_load",
     description: "Load a previously saved interface from the registry and render it directly \u2014 without putting the HTML into context. Use this instead of uiclaw_read when you just want to display an existing interface. Pass the interface ID.",
@@ -166,14 +160,13 @@ export default function register(api: any) {
         var lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
         return { content: [{ type: "text", text: "Not found: " + params.id + ". Available: " + (lines.join(", ") || "none") }] };
       }
-      // skipRegister: true — don't re-register an already-registered interface
       await pushToUIClaw({
         type: "ui.replace",
         spec: { type: "Canvas", html: html, height: params.height || 400 },
         replace: true,
         skipRegister: true,
       });
-      return { content: [{ type: "text", text: "Loaded interface " + params.id + " (" + html.split("\n").length + " lines). Rendered directly from disk." }] };
+      return { content: [{ type: "text", text: "Loaded " + params.id + " (" + html.split("\n").length + " lines)" }] };
     },
   });
 
