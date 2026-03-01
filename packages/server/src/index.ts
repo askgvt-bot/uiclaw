@@ -195,6 +195,42 @@ const httpServer = createServer((req, res) => {
   }
 });
 
+// ─── Shared Gateway (single connection to OpenClaw) ──────────
+let sharedGateway: GatewayClient | null = null;
+let sharedState = {
+  currentUi: null as any,
+  lastUserMessage: null as string | null,
+  gatewayConnected: false,
+};
+
+function initSharedGateway() {
+  if (sharedGateway) return;
+  sharedGateway = new GatewayClient({
+    url: GATEWAY_URL,
+    token: GATEWAY_TOKEN || undefined,
+    onEvent: (event) => handleSharedGatewayEvent(event),
+    onConnected: () => {
+      sharedState.gatewayConnected = true;
+      broadcast({ type: "gateway.connected" });
+    },
+    onDisconnected: (reason) => {
+      sharedState.gatewayConnected = false;
+      broadcast({ type: "gateway.disconnected", reason });
+      // Reconnect after a delay
+      setTimeout(() => { if (sharedGateway) sharedGateway.connect(); }, 2000);
+    },
+    onError: (error) => broadcast({ type: "error", message: error }),
+  });
+  sharedGateway.connect();
+  console.log("[UIClaw] Shared gateway initialized");
+}
+
+function broadcast(msg: any) {
+  for (const [id, state] of clients) {
+    if (state.ws.readyState === 1) send(state.ws, msg);
+  }
+}
+
 // ─── WebSocket Server ────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
@@ -202,19 +238,15 @@ wss.on("connection", (ws) => {
   const clientId = `c_${Date.now().toString(36)}`;
   console.log(`[UIClaw] Client connected: ${clientId}`);
 
-  // Create a gateway connection for this client
-  const gateway = new GatewayClient({
-    url: GATEWAY_URL,
-    token: GATEWAY_TOKEN || undefined,
-    onEvent: (event) => handleGatewayEvent(clientId, event),
-    onConnected: () => send(ws, { type: "gateway.connected" }),
-    onDisconnected: (reason) => send(ws, { type: "gateway.disconnected", reason }),
-    onError: (error) => send(ws, { type: "error", message: error }),
-  });
+  // Initialize shared gateway on first client
+  initSharedGateway();
 
-  const state: ClientState = { ws, gateway, currentUi: null, lastUserMessage: null };
+  const state: ClientState = { ws, gateway: sharedGateway!, currentUi: sharedState.currentUi, lastUserMessage: sharedState.lastUserMessage };
   clients.set(clientId, state);
-  gateway.connect();
+
+  // Send current state to new client
+  if (sharedState.gatewayConnected) send(ws, { type: "gateway.connected" });
+  if (sharedState.currentUi) send(ws, { type: "ui.update", spec: sharedState.currentUi, replace: true });
 
   ws.on("message", (raw) => {
     try {
@@ -227,8 +259,8 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     console.log(`[UIClaw] Client disconnected: ${clientId}`);
-    gateway.close();
     clients.delete(clientId);
+    // Don't close gateway — it's shared
   });
 });
 
@@ -253,8 +285,9 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       const text = msg.text?.trim();
       if (!text) return;
       state.lastUserMessage = text;
+      sharedState.lastUserMessage = text;
       try {
-        const key = await state.gateway.sendMessage(text);
+        const key = await sharedGateway!.sendMessage(text);
         send(state.ws, { type: "chat.ack", idempotencyKey: key });
       } catch (e: any) {
         send(state.ws, { type: "error", message: `Send failed: ${e.message}` });
@@ -264,7 +297,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 
     case "chat.abort": {
       try {
-        await state.gateway.abort();
+        await sharedGateway!.abort();
         send(state.ws, { type: "chat.aborted" });
       } catch (e: any) {
         send(state.ws, { type: "error", message: `Abort failed: ${e.message}` });
@@ -273,8 +306,8 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
     }
 
     case "ui.get": {
-      send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
-    autoRegisterInterface(state.currentUi!, state.lastUserMessage);
+      send(state.ws, { type: "ui.update", spec: sharedState.currentUi, replace: true });
+    autoRegisterInterface(sharedState.currentUi!, sharedState.lastUserMessage);
       break;
     }
 
@@ -285,7 +318,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       if (actionType === "screenshot-data" && typeof payload === "string" && payload.startsWith("data:image")) {
         console.log("[UIClaw] Screenshot received (" + Math.round(payload.length / 1024) + "KB) — saving to registry, NOT sending to agent");
         try {
-          saveScreenshotFromBase64(payload, state.currentUi);
+          saveScreenshotFromBase64(payload, sharedState.currentUi);
         } catch (e: any) {
           console.error("[UIClaw] Screenshot save error: " + e.message);
         }
@@ -295,7 +328,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       const structured = `[CANVAS_ACTION type="${actionType}"]\n${payload}\n[/CANVAS_ACTION]`;
       try {
         console.log(`[UIClaw] Canvas action: type=${actionType}, payload=${payload.slice(0, 200)}`);
-        await state.gateway.sendMessage(structured);
+        await sharedGateway!.sendMessage(structured);
       } catch (e: any) {
         send(state.ws, { type: "error", message: `Canvas action failed: ${e.message}` });
       }
@@ -305,9 +338,9 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 }
 
 // ─── Gateway → Client ────────────────────────────────────────
-function handleGatewayEvent(clientId: string, event: any) {
-  const state = clients.get(clientId);
-  if (!state) return;
+function handleSharedGatewayEvent(event: any) {
+  // Use sharedState for tracking, broadcast to all clients
+  const state = sharedState;
 
   const eventType = event.event ?? "";
   const payload = event.payload ?? {};
@@ -346,7 +379,7 @@ function handleGatewayEvent(clientId: string, event: any) {
       const role = msg.role ?? "assistant";
       
       if (text) {
-        send(state.ws, {
+        broadcast({
           type: "chat.delta",
           role,
           content: text,
@@ -370,7 +403,7 @@ function handleGatewayEvent(clientId: string, event: any) {
       }
       
       if (text) {
-        send(state.ws, {
+        broadcast({
           type: "chat.message",
           role: finalMsg.role ?? "assistant",
           content: text,
@@ -380,18 +413,18 @@ function handleGatewayEvent(clientId: string, event: any) {
 
       }
       
-      send(state.ws, { type: "chat.done", runId: payload.runId });
+      broadcast({ type: "chat.done", runId: payload.runId });
     }
     
     if (chatState === "error") {
-      send(state.ws, { type: "chat.error", error: payload.errorMessage ?? "Unknown error" });
+      broadcast({ type: "chat.error", error: payload.errorMessage ?? "Unknown error" });
     }
   }
 
   // Chat history (from our own request)
   if (eventType === "chat.history") {
     const messages = payload.messages ?? event.messages ?? [];
-    send(state.ws, {
+    broadcast({
       type: "chat.history",
       entries: messages.map((m: any) => ({
         role: m.role ?? "system",
@@ -403,20 +436,20 @@ function handleGatewayEvent(clientId: string, event: any) {
 
   // Agent lifecycle events (tool calls, thinking, etc.)
   if (eventType.startsWith("agent.") || eventType.startsWith("tool.")) {
-    send(state.ws, { type: "agent.event", eventType, data: payload });
+    broadcast({ type: "agent.event", eventType, data: payload });
   }
 
   // UIClaw plugin events → workspace panel
   if (eventType === "uiclaw.ui.update") {
     const spec = normalizeSpec(payload.spec ?? payload);
     const replace = payload.replace ?? true;
-    state.currentUi = mergeSpecs(state.currentUi, spec, replace);
-    send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
-    autoRegisterInterface(state.currentUi!, state.lastUserMessage);
+    sharedState.currentUi = mergeSpecs(sharedState.currentUi, spec, replace);
+    broadcast({ type: "ui.update", spec: sharedState.currentUi, replace: true });
+    autoRegisterInterface(sharedState.currentUi!, sharedState.lastUserMessage);
   }
 
   if (eventType === "uiclaw.form.show") {
-    send(state.ws, {
+    broadcast({
       type: "form.show",
       formId: payload.formId,
       title: payload.title,
@@ -427,7 +460,7 @@ function handleGatewayEvent(clientId: string, event: any) {
 
   // Forward everything else the frontend might want
   if (eventType === "sessions.list") {
-    send(state.ws, { type: "sessions.list", sessions: payload.sessions ?? event.sessions ?? [] });
+    broadcast({ type: "sessions.list", sessions: payload.sessions ?? event.sessions ?? [] });
   }
 }
 
