@@ -7,7 +7,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { readFileSync, existsSync, createReadStream, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, existsSync, createReadStream, writeFileSync, mkdirSync, readdirSync, statSync } from "fs";
 import { resolve, join } from "path";
 import { GatewayClient } from "./gateway-client.js";
 import { autoLayout, normalizeSpec, mergeSpecs, type UISpec } from "@uiclaw/ui-engine";
@@ -266,17 +266,35 @@ wss.on("connection", (ws) => {
 
 // ─── Client → Gateway ────────────────────────────────────────
 
-function saveScreenshotFromBase64(dataUrl: string, currentUi: any) {
-  if (!currentUi) return;
-  const specStr = JSON.stringify(currentUi, null, 2);
-  const hash = createHash("sha256").update(specStr).digest("hex").slice(0, 12);
-  const id = "ui_" + hash;
-  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-  const buffer = Buffer.from(base64Data, "base64");
-  const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
-  mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
-  writeFileSync(screenshotPath, buffer);
-  console.log("[Registry] Screenshot saved for " + id + " (" + Math.round(buffer.length / 1024) + "KB)");
+function saveScreenshotFromBase64(dataUrl: string, _currentUi: any) {
+  // Find the most recently modified interface file — that's what the browser just rendered
+  const interfacesDir = join(REGISTRY_ROOT, "interfaces");
+  try {
+    const files = readdirSync(interfacesDir)
+      .filter((f: string) => f.endsWith(".html"))
+      .map((f: string) => ({ name: f, mtime: statSync(join(interfacesDir, f)).mtimeMs }))
+      .sort((a: any, b: any) => b.mtime - a.mtime);
+    if (files.length === 0) return;
+    const id = files[0].name.replace(".html", "");
+    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+    const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
+    mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
+    writeFileSync(screenshotPath, buffer);
+    // Also update index.json with screenshot path
+    const indexPath = join(REGISTRY_ROOT, "index.json");
+    if (existsSync(indexPath)) {
+      const idx = JSON.parse(readFileSync(indexPath, "utf-8"));
+      const entry = (idx.interfaces || []).find((e: any) => e.id === id);
+      if (entry) {
+        entry.screenshotFile = "screenshots/" + id + ".png";
+        writeFileSync(indexPath, JSON.stringify(idx, null, 2));
+      }
+    }
+    console.log("[Registry] Screenshot saved for " + id + " (" + Math.round(buffer.length / 1024) + "KB)");
+  } catch (e: any) {
+    console.error("[Registry] Screenshot save error: " + e.message);
+  }
 }
 
 async function handleClientMessage(clientId: string, state: ClientState, msg: any) {
