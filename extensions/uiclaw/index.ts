@@ -138,12 +138,15 @@ To modify an existing interface: call uiclaw_read(id) first, edit the code, then
     async execute(_ctx: any, params: { id: string }) {
       if (params.id === "list") {
         const available = listInterfaces();
-        return { content: [{ type: "text", text: available.length ? `Available interfaces:\n${available.map(i => \`- \${i.id} (\${i.lines} lines, \${i.sizeKb}KB)\`).join("\n")}` : "No interfaces saved yet." }] };
+        const lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        const text = lines.length > 0 ? "Available interfaces:\n" + lines.join("\n") : "No interfaces saved yet.";
+        return { content: [{ type: "text", text: text }] };
       }
       const html = loadInterface(params.id);
       if (!html) {
         const available = listInterfaces();
-        return { content: [{ type: "text", text: `Not found: "${params.id}"\n\nAvailable:\n${available.map(i => `- ${i.id} (${i.lines} lines, ${i.sizeKb}KB)`).join("\n") || "none"}` }] };
+        const lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        return { content: [{ type: "text", text: "Not found: " + params.id + "\n\nAvailable:\n" + (lines.join("\n") || "none") }] };
       }
       return { content: [{ type: "text", text: html }] };
     },
