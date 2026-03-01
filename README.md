@@ -10,12 +10,12 @@ UIClaw gives your OpenClaw agent a modern split-panel web interface — chat on 
 
 | Spreadsheet | SaaS Unit Economics |
 |:-:|:-:|
-| ![Spreadsheet](docs/screenshots/spreadsheet.png) | ![SaaS Calculator](docs/screenshots/saas-calculator.png) |
+| ![Spreadsheet](images/examples/spreadsheet.png) | ![SaaS Calculator](images/examples/saas-calculator.png) |
 | *"Build me a quick spreadsheet to do some basic maths"* | *"Build a SaaS unit economics calculator"* |
 
 | Mood Board Builder | Influencer Directory |
 |:-:|:-:|
-| ![Mood Board](docs/screenshots/mood-board.png) | ![Influencer Directory](docs/screenshots/influencer-directory.png) |
+| ![Mood Board](images/examples/mood-board.png) | ![Influencer Directory](images/examples/influencer-directory.png) |
 | *"Create a luxury product launch mood board builder"* | *"Find 30 Dubai luxury YouTubers with 1M+ subs"* |
 
 ## How It Works
