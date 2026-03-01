@@ -101,6 +101,11 @@ function useUIClaw() {
           setMessages((prev) => {
             // If this is a final message, replace any streaming message
             const filtered = prev.filter((m) => !m.streaming);
+            // Deduplicate: skip if last message has same role + content
+            const last = filtered[filtered.length - 1];
+            if (last && last.role === msg.role && last.content === msg.content) {
+              return filtered;
+            }
             return [
               ...filtered,
               {
