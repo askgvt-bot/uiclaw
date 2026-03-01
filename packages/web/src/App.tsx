@@ -318,27 +318,33 @@ export function App() {
   useEffect(() => {
     if (!registryOpen) return;
     let active = true;
-    setRegistryLoading(true);
-    setRegistryError(null);
-    fetch("/api/registry")
-      .then((res) => {
-        if (!res.ok) throw new Error(`Registry load failed (${res.status})`);
-        return res.json();
-      })
-      .then((data: RegistryIndex | RegistryEntry[]) => {
-        if (!active) return;
-        if (Array.isArray(data)) setRegistryEntries(data);
-        else setRegistryEntries(data.interfaces ?? []);
-      })
-      .catch((err: Error) => {
-        if (!active) return;
-        setRegistryError(err.message);
-      })
-      .finally(() => {
-        if (!active) return;
-        setRegistryLoading(false);
-      });
-    return () => { active = false; };
+
+    const fetchRegistry = (showLoading = false) => {
+      if (showLoading) setRegistryLoading(true);
+      setRegistryError(null);
+      fetch("/api/registry")
+        .then((res) => {
+          if (!res.ok) throw new Error(`Registry load failed (${res.status})`);
+          return res.json();
+        })
+        .then((data: RegistryIndex | RegistryEntry[]) => {
+          if (!active) return;
+          if (Array.isArray(data)) setRegistryEntries(data);
+          else setRegistryEntries(data.interfaces ?? []);
+        })
+        .catch((err: Error) => {
+          if (!active) return;
+          setRegistryError(err.message);
+        })
+        .finally(() => {
+          if (!active) return;
+          setRegistryLoading(false);
+        });
+    };
+
+    fetchRegistry(true); // Initial load with spinner
+    const interval = setInterval(() => fetchRegistry(false), 5000); // Refresh every 5s silently
+    return () => { active = false; clearInterval(interval); };
   }, [registryOpen]);
 
   const filteredRegistry = registryEntries.filter((entry) => {
@@ -580,13 +586,26 @@ function RegistryBrowser({
                 }`}
               >
                 <div className="aspect-[4/3] bg-slate-900/80 rounded-lg overflow-hidden border border-slate-800/70">
-                  {entry.screenshotFile ? (
-                    <img src={entry.screenshotFile} alt={entry.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
-                      No screenshot
+                  {entry.hasScreenshot && entry.screenshotFile ? (
+                    <img
+                      src={entry.screenshotFile}
+                      alt={entry.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                        (e.target as HTMLImageElement).nextElementSibling?.classList.remove("hidden");
+                      }}
+                    />
+                  ) : null}
+                  <div className={`w-full h-full flex flex-col items-center justify-center gap-2 ${entry.hasScreenshot && entry.screenshotFile ? "hidden" : ""}`}>
+                    <div className="text-2xl opacity-30">📸</div>
+                    <div className="text-[10px] text-slate-500">Capturing screenshot...</div>
+                    <div className="flex gap-0.5">
+                      <div className="w-1 h-1 bg-slate-600 rounded-full animate-pulse" style={{animationDelay: "0ms"}} />
+                      <div className="w-1 h-1 bg-slate-600 rounded-full animate-pulse" style={{animationDelay: "200ms"}} />
+                      <div className="w-1 h-1 bg-slate-600 rounded-full animate-pulse" style={{animationDelay: "400ms"}} />
                     </div>
-                  )}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold text-slate-200">{entry.name}</div>
