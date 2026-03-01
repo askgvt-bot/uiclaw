@@ -51,6 +51,10 @@ const httpServer = createServer((req, res) => {
           console.log(`[API] Sending to client ${id}, ws.readyState=${state.ws.readyState}, open=${ready}`);
           send(state.ws, { ...data, type, spec });
         }
+        // Auto-register the interface
+        if (type !== "ui.form" && spec) {
+          autoRegisterInterface(spec as UISpec);
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, clients: clients.size }));
       } catch (e: any) {
