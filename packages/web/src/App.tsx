@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import html2canvas from "html2canvas";
 import { RenderComponent, type UIComponent } from "./components";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -246,6 +247,7 @@ export function App() {
   const { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, sendMessage, submitForm } = useUIClaw();
   const [input, setInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
   const [chatWidth, setChatWidth] = useState(380);
   const [registryOpen, setRegistryOpen] = useState(false);
   const [registryEntries, setRegistryEntries] = useState<RegistryEntry[]>([]);
@@ -257,6 +259,34 @@ export function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Auto-capture screenshot when a new UI renders
+  useEffect(() => {
+    if (!uiSpec || !workspaceRef.current) return;
+    const timer = setTimeout(async () => {
+      try {
+        const el = workspaceRef.current;
+        if (!el) return;
+        const canvas = await html2canvas(el, {
+          backgroundColor: "#0f172a",
+          scale: 1,
+          logging: false,
+          useCORS: true,
+        });
+        const dataUrl = canvas.toDataURL("image/png");
+        // Send to server
+        await fetch("/api/registry/screenshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: dataUrl }),
+        });
+        console.log("[UIClaw] Screenshot captured and sent to registry");
+      } catch (e) {
+        console.error("[UIClaw] Screenshot capture failed:", e);
+      }
+    }, 2000); // Wait 2s for UI to fully render
+    return () => clearTimeout(timer);
+  }, [uiSpec]);
 
   useEffect(() => {
     if (!registryOpen) return;
@@ -399,7 +429,7 @@ export function App() {
         </div>
 
         {/* Workspace panel */}
-        <div className="flex-1 flex flex-col overflow-hidden relative">
+        <div ref={workspaceRef} className="flex-1 flex flex-col overflow-hidden relative">
           {isLoading && (
             <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm z-10 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">

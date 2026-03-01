@@ -87,6 +87,57 @@ const httpServer = createServer((req, res) => {
     return;
   }
 
+  // ── API: Registry screenshot upload (from frontend html2canvas) ──
+  if (req.method === "POST" && req.url === "/api/registry/screenshot") {
+    let body = "";
+    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+    req.on("end", () => {
+      try {
+        const { image } = JSON.parse(body);
+        if (!image || !image.startsWith("data:image/png;base64,")) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid image data" }));
+          return;
+        }
+        const base64Data = image.replace(/^data:image\/png;base64,/, "");
+        const buffer = Buffer.from(base64Data, "base64");
+        
+        // Find the most recently registered interface
+        const indexPath = join(REGISTRY_ROOT, "index.json");
+        if (!existsSync(indexPath)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No registry" }));
+          return;
+        }
+        const index = JSON.parse(readFileSync(indexPath, "utf-8"));
+        const latest = index.interfaces
+          .filter((e: any) => !e.hasScreenshot)
+          .sort((a: any, b: any) => new Date(b.created).getTime() - new Date(a.created).getTime())[0];
+        
+        if (!latest) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, skipped: true, reason: "all have screenshots" }));
+          return;
+        }
+        
+        const screenshotPath = join(REGISTRY_ROOT, latest.screenshotFile || `screenshots/${latest.id}.png`);
+        mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
+        writeFileSync(screenshotPath, buffer);
+        
+        latest.hasScreenshot = true;
+        writeFileSync(indexPath, JSON.stringify(index, null, 2));
+        
+        console.log(`[Registry] Screenshot saved for ${latest.id} (${latest.name})`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, id: latest.id }));
+      } catch (e: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // ── Serve local files referenced by agents (images, etc.) ──
   if (req.method === "GET" && req.url?.startsWith("/files/")) {
     const filePath = decodeURIComponent(req.url.slice("/files".length)); // keeps leading /
@@ -374,7 +425,6 @@ httpServer.listen(PORT, HOST, () => {
 
 // ─── Auto-Registration ──────────────────────────────────────
 import { createHash } from "crypto";
-import { execFile } from "child_process";
 
 const REGISTRY_SPECS = join(REGISTRY_ROOT, "specs");
 const REGISTRY_SCREENSHOTS = join(REGISTRY_ROOT, "screenshots");
@@ -494,8 +544,6 @@ function autoRegisterInterface(spec: UISpec) {
     writeFileSync(indexPath, JSON.stringify(index, null, 2));
     console.log(`[Registry] Auto-registered: ${id} (${name})`);
     
-    // Async: capture screenshot via Playwright
-    captureScreenshot(id, spec);
     
   } catch (e: any) {
     console.error(`[Registry] Auto-register failed:`, e.message);
@@ -518,35 +566,3 @@ function inferTags(spec: any): string[] {
   return [...new Set(tags)];
 }
 
-function captureScreenshot(id: string, _spec: UISpec) {
-  const screenshotPath = join(REGISTRY_SCREENSHOTS, `${id}.png`);
-  const url = `http://${HOST}:${PORT}`;
-  
-  // Use npx playwright screenshot CLI (reliable, no module resolution issues)
-  // Delay slightly to let the UI render
-  setTimeout(() => {
-    execFile("npx", [
-      "playwright", "screenshot",
-      "--viewport-size", "1280,800",
-      "--wait-for-timeout", "3000",
-      url,
-      screenshotPath,
-    ], { timeout: 20000 }, (err) => {
-      if (err) {
-        console.error(`[Registry] Screenshot failed for ${id}:`, err.message);
-        return;
-      }
-      // Update hasScreenshot in index
-      try {
-        const indexPath = join(REGISTRY_ROOT, "index.json");
-        const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-        const entry = index.interfaces.find((e: any) => e.id === id);
-        if (entry) {
-          entry.hasScreenshot = true;
-          writeFileSync(indexPath, JSON.stringify(index, null, 2));
-        }
-        console.log(`[Registry] Screenshot captured: ${id}`);
-      } catch {}
-    });
-  }, 1000);
-}
