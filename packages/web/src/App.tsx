@@ -95,7 +95,6 @@ function useUIClaw() {
             }
             return [...prev, entry];
           });
-          setIsLoading(true);
           break;
         case "chat.message":
           setMessages((prev) => {
