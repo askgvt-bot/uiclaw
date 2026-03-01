@@ -55,9 +55,13 @@ const httpServer = createServer((req, res) => {
           console.log(`[API] Sending to client ${id}, ws.readyState=${state.ws.readyState}, open=${ready}`);
           send(state.ws, { ...data, type, spec });
         }
-        // Auto-register the interface
-        if (type !== "ui.form" && spec && !data.skipRegister) {
-          // autoRegisterInterface — disabled, plugin handles registration
+        // Track rendered interface and capture screenshot
+        const html = spec?.html ?? spec?.children?.[0]?.html;
+        if (html) {
+          const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
+          sharedState.lastRenderedId = "ui_" + hash;
+          sharedState.currentUi = spec;
+          setTimeout(() => captureScreenshot("ui_" + hash), 2000);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, clients: clients.size }));
