@@ -182,6 +182,40 @@ function CanvasComponent({ component }: { component: UIComponent }) {
     function sendToApp(type, data) {
       window.parent.postMessage({ source: 'uiclaw-canvas', type, data }, '*');
     }
+    // Listen for screenshot capture requests from parent
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.source === 'uiclaw-parent' && e.data.type === 'capture-screenshot') {
+        // Use html2canvas if available, otherwise canvas API
+        try {
+          var c = document.createElement('canvas');
+          var scale = 1;
+          c.width = document.documentElement.scrollWidth * scale;
+          c.height = document.documentElement.scrollHeight * scale;
+          var ctx = c.getContext('2d');
+          // Draw background
+          ctx.fillStyle = getComputedStyle(document.body).backgroundColor || '#1e293b';
+          ctx.fillRect(0, 0, c.width, c.height);
+          // Use foreignObject SVG trick to render HTML to canvas
+          var data = '<svg xmlns="http://www.w3.org/2000/svg" width="'+c.width+'" height="'+c.height+'">' +
+            '<foreignObject width="100%" height="100%">' +
+            new XMLSerializer().serializeToString(document.documentElement) +
+            '</foreignObject></svg>';
+          var img = new Image();
+          img.onload = function() {
+            ctx.drawImage(img, 0, 0);
+            var dataUrl = c.toDataURL('image/png');
+            window.parent.postMessage({ source: 'uiclaw-canvas', type: 'screenshot-data', data: dataUrl }, '*');
+          };
+          img.onerror = function() {
+            // Fallback: just send a placeholder
+            window.parent.postMessage({ source: 'uiclaw-canvas', type: 'screenshot-data', data: null }, '*');
+          };
+          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(data);
+        } catch(err) {
+          console.error('Screenshot capture failed inside iframe:', err);
+        }
+      }
+    });
   </script>`;
   const html = rawHtml.includes("<head>")
     ? rawHtml.replace("<head>", `<head>${darkStyles}${bridge}`)
