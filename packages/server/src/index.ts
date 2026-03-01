@@ -57,7 +57,7 @@ const httpServer = createServer((req, res) => {
         }
         // Auto-register the interface
         if (type !== "ui.form" && spec && !data.skipRegister) {
-          autoRegisterInterface(spec as UISpec, data.title || data.description || null);
+          // autoRegisterInterface — disabled, plugin handles registration
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, clients: clients.size }));
@@ -320,7 +320,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 
     case "ui.get": {
       send(state.ws, { type: "ui.update", spec: sharedState.currentUi, replace: true });
-    autoRegisterInterface(sharedState.currentUi!, sharedState.lastUserMessage);
+    // autoRegisterInterface — disabled, plugin handles registration
       break;
     }
 
@@ -468,7 +468,7 @@ function handleSharedGatewayEvent(event: any) {
       const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
       sharedState.lastRenderedId = "ui_" + hash;
     }
-    autoRegisterInterface(sharedState.currentUi!, sharedState.lastUserMessage);
+    // autoRegisterInterface — disabled, plugin handles registration
   }
 
   if (eventType === "uiclaw.form.show") {
