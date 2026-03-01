@@ -379,6 +379,65 @@ import { execFile } from "child_process";
 const REGISTRY_SPECS = join(REGISTRY_ROOT, "specs");
 const REGISTRY_SCREENSHOTS = join(REGISTRY_ROOT, "screenshots");
 
+function deriveInterfaceName(spec: any): string {
+  const type = (spec.type || "").toLowerCase();
+  
+  // Map component types to descriptive names
+  const typeNames: Record<string, string> = {
+    canvas: "Interactive Canvas",
+    datatable: "Data Table",
+    card: "Info Card",
+    stack: "Layout Stack",
+    markdown: "Content View",
+    imagegrid: "Image Gallery",
+    colorpalette: "Color Palette",
+  };
+  
+  // Check for specific content patterns
+  const str = JSON.stringify(spec).toLowerCase();
+  if (str.includes("spreadsheet") || str.includes("cell") || str.includes("grid")) return "Spreadsheet Interface";
+  if (str.includes("chart") || str.includes("graph")) return "Chart Visualization";
+  if (str.includes("dashboard")) return "Dashboard";
+  if (str.includes("form") || str.includes("input")) return "Form Interface";
+  if (str.includes("kanban") || str.includes("board")) return "Kanban Board";
+  if (str.includes("timeline") || str.includes("gantt")) return "Timeline View";
+  if (str.includes("calendar")) return "Calendar View";
+  if (str.includes("editor") || str.includes("code")) return "Code Editor";
+  if (str.includes("map") || str.includes("geo")) return "Map View";
+  if (str.includes("chat") || str.includes("message")) return "Chat Interface";
+  if (str.includes("table") || str.includes("rows") || str.includes("columns")) return "Data Table";
+  
+  // Fall back to type name
+  if (typeNames[type]) return typeNames[type];
+  if (type) return type.charAt(0).toUpperCase() + type.slice(1) + " Interface";
+  
+  // Check children for clues
+  if (spec.children && Array.isArray(spec.children)) {
+    const childTypes = spec.children.map((c: any) => (c.type || "").toLowerCase());
+    if (childTypes.includes("datatable")) return "Data Table Layout";
+    if (childTypes.includes("card")) return "Card Layout";
+    if (childTypes.includes("canvas")) return "Interactive Canvas Layout";
+  }
+  
+  return "Custom Interface";
+}
+
+function deriveInterfaceDescription(spec: any): string {
+  const name = deriveInterfaceName(spec);
+  const str = JSON.stringify(spec).toLowerCase();
+  const parts: string[] = [`${name}.`];
+  
+  // Count components
+  const componentCount = (JSON.stringify(spec).match(/"type"/g) || []).length;
+  if (componentCount > 1) parts.push(`${componentCount} components.`);
+  
+  // Note interactive features
+  if (str.includes("onclick") || str.includes("button") || str.includes("click")) parts.push("Interactive.");
+  if (str.includes("input") || str.includes("editable")) parts.push("Editable.");
+  
+  return parts.join(" ");
+}
+
 function autoRegisterInterface(spec: UISpec) {
   try {
     // Generate stable ID from spec content
@@ -387,8 +446,8 @@ function autoRegisterInterface(spec: UISpec) {
     const id = `ui_${hash}`;
     
     // Derive name and description from spec
-    const name = (spec as any).title || (spec as any).name || (spec as any).type || "Untitled Interface";
-    const description = (spec as any).description || `Auto-registered ${(spec as any).type || "interface"}`;
+    const name = deriveInterfaceName(spec);
+    const description = deriveInterfaceDescription(spec);
     const tags = inferTags(spec);
     
     // Ensure dirs exist
@@ -463,40 +522,31 @@ function captureScreenshot(id: string, _spec: UISpec) {
   const screenshotPath = join(REGISTRY_SCREENSHOTS, `${id}.png`);
   const url = `http://${HOST}:${PORT}`;
   
-  // Use Playwright to screenshot the current rendered UI
-  const script = `
-    const { chromium } = require('playwright');
-    (async () => {
-      const browser = await chromium.launch();
-      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-      await page.goto('${url}');
-      await page.waitForTimeout(2000);
-      // Screenshot just the workspace panel (right side)
-      const workspace = await page.$('.flex-1.flex.flex-col.overflow-hidden.relative');
-      if (workspace) {
-        await workspace.screenshot({ path: '${screenshotPath}' });
-      } else {
-        await page.screenshot({ path: '${screenshotPath}' });
+  // Use npx playwright screenshot CLI (reliable, no module resolution issues)
+  // Delay slightly to let the UI render
+  setTimeout(() => {
+    execFile("npx", [
+      "playwright", "screenshot",
+      "--viewport-size", "1280,800",
+      "--wait-for-timeout", "3000",
+      url,
+      screenshotPath,
+    ], { timeout: 20000 }, (err) => {
+      if (err) {
+        console.error(`[Registry] Screenshot failed for ${id}:`, err.message);
+        return;
       }
-      await browser.close();
-    })();
-  `;
-  
-  execFile("node", ["-e", script], { timeout: 15000 }, (err) => {
-    if (err) {
-      console.error(`[Registry] Screenshot failed for ${id}:`, err.message);
-      return;
-    }
-    // Update hasScreenshot in index
-    try {
-      const indexPath = join(REGISTRY_ROOT, "index.json");
-      const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-      const entry = index.interfaces.find((e: any) => e.id === id);
-      if (entry) {
-        entry.hasScreenshot = true;
-        writeFileSync(indexPath, JSON.stringify(index, null, 2));
-      }
-      console.log(`[Registry] Screenshot captured: ${id}`);
-    } catch {}
-  });
+      // Update hasScreenshot in index
+      try {
+        const indexPath = join(REGISTRY_ROOT, "index.json");
+        const index = JSON.parse(readFileSync(indexPath, "utf-8"));
+        const entry = index.interfaces.find((e: any) => e.id === id);
+        if (entry) {
+          entry.hasScreenshot = true;
+          writeFileSync(indexPath, JSON.stringify(index, null, 2));
+        }
+        console.log(`[Registry] Screenshot captured: ${id}`);
+      } catch {}
+    });
+  }, 1000);
 }
