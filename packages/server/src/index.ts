@@ -39,11 +39,14 @@ const httpServer = createServer((req, res) => {
       try {
         const data = JSON.parse(body);
         // Transform local file paths to /files/ URLs so the browser can load them
-        const specStr = JSON.stringify(data.spec);
-        const fixedStr = specStr.replace(/"(\/Users\/[^"]+)"/g, (_match, path) => {
-          return `"/files${path}"`;
-        });
-        const spec = JSON.parse(fixedStr);
+        let spec = data.spec;
+        if (spec) {
+          const specStr = JSON.stringify(spec);
+          const fixedStr = specStr.replace(/"(\/Users\/[^"]+)"/g, (_match: string, path: string) => {
+            return `"/files${path}"`;
+          });
+          spec = JSON.parse(fixedStr);
+        }
         const type = data.type ?? "ui.replace"; // ui.replace or ui.form
         console.log(`[API] /api/ui received: type=${type}, spec keys=${Object.keys(spec || {}).join(",")}`);
         // Push to ALL connected browser clients
