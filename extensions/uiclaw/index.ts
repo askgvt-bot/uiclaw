@@ -96,7 +96,7 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
     name: "uiclaw_canvas",
     description: `Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk — only a summary stays in context.
 
-BEFORE BUILDING: Always call uiclaw_read first to check if a matching interface already exists in the registry. Adapt existing interfaces rather than building from scratch when possible.
+BEFORE BUILDING: Call uiclaw_read(id="list") to check existing interfaces. If one matches, use uiclaw_load(id) to render it directly (zero context cost). Only use uiclaw_read(id) if you need to modify the code.
 
 To modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.`,
     parameters: {
@@ -127,7 +127,7 @@ To modify an existing interface: call uiclaw_read(id) first, edit the code, then
 
   api.registerTool({
     name: "uiclaw_read",
-    description: "Read the HTML code of a previously rendered Canvas interface. Call with id to load specific code, or with id=\"list\" to see all available interfaces. ALWAYS check this before building a new Canvas — reuse existing interfaces when they match the user's request.",
+    description: "List saved interfaces (id=\"list\") or read HTML code for editing. Use uiclaw_load to render an existing interface WITHOUT loading code into context. Only use uiclaw_read when you need to MODIFY the code.",
     parameters: {
       type: "object",
       properties: {
@@ -149,6 +149,33 @@ To modify an existing interface: call uiclaw_read(id) first, edit the code, then
         return { content: [{ type: "text", text: "Not found: " + params.id + "\n\nAvailable:\n" + (lines.join("\n") || "none") }] };
       }
       return { content: [{ type: "text", text: html }] };
+    },
+  });
+
+  api.registerTool({
+    name: "uiclaw_load",
+    description: "Load a previously saved interface from the registry and render it directly — without putting the HTML into context. Use this instead of uiclaw_read when you just want to display an existing interface. Pass the interface ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Interface ID to load and render" },
+        height: { type: "number", description: "Height in pixels (default 400)" },
+      },
+      required: ["id"],
+    },
+    async execute(_ctx: any, params: { id: string; height?: number }) {
+      const html = loadInterface(params.id);
+      if (!html) {
+        const available = listInterfaces();
+        const lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        return { content: [{ type: "text", text: "Not found: " + params.id + ". Available: " + (lines.join(", ") || "none") }] };
+      }
+      await pushToUIClaw({
+        type: "ui.replace",
+        spec: { type: "Canvas", html: html, height: params.height || 400 },
+        replace: true,
+      });
+      return { content: [{ type: "text", text: "Loaded interface " + params.id + " (" + html.split("\n").length + " lines). Rendered directly from disk." }] };
     },
   });
 
