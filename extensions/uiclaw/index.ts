@@ -1,15 +1,50 @@
 /**
  * UIClaw — OpenClaw Plugin
  * 
- * Registers agent tools for rendering rich UI in the UIClaw web client.
- * Tools push UI specs to the UIClaw server via HTTP POST.
+ * Context optimization: HTML/specs are saved to disk and only a summary
+ * is returned to the agent context. Use uiclaw_read to recall code when
+ * modifying an existing interface.
  */
 
+import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { join } from "path";
+import { createHash } from "crypto";
+
 const UICLAW_URL = process.env.UICLAW_URL ?? "http://127.0.0.1:3800";
+const INTERFACES_DIR = join(
+  process.env.HOME ?? "/tmp",
+  ".openclaw/workspace/uiclaw-registry/interfaces"
+);
+
+mkdirSync(INTERFACES_DIR, { recursive: true });
+
+function saveInterface(html: string, title?: string): { id: string; path: string; lines: number } {
+  const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
+  const id = `ui_${hash}`;
+  const filepath = join(INTERFACES_DIR, `${id}.html`);
+  writeFileSync(filepath, html);
+  return { id, path: filepath, lines: html.split("\n").length };
+}
+
+function loadInterface(id: string): string | null {
+  const filepath = join(INTERFACES_DIR, `${id}.html`);
+  if (existsSync(filepath)) return readFileSync(filepath, "utf-8");
+  const filepath2 = join(INTERFACES_DIR, `ui_${id}.html`);
+  if (existsSync(filepath2)) return readFileSync(filepath2, "utf-8");
+  return null;
+}
+
+function listInterfaces(): { id: string; lines: number; sizeKb: number }[] {
+  try {
+    return readdirSync(INTERFACES_DIR).filter(f => f.endsWith(".html")).map(f => {
+      const fp = join(INTERFACES_DIR, f);
+      const content = readFileSync(fp, "utf-8");
+      return { id: f.replace(".html", ""), lines: content.split("\n").length, sizeKb: Math.round(statSync(fp).size / 1024) };
+    });
+  } catch { return []; }
+}
 
 async function pushToUIClaw(data: Record<string, unknown>): Promise<void> {
-  console.log(`[UIClaw Plugin] pushToUIClaw called, url=${UICLAW_URL}/api/ui, keys=${Object.keys(data).join(",")}`);
-  console.log(`[UIClaw Plugin] spec: ${JSON.stringify(data).slice(0, 2000)}`);
   try {
     const res = await fetch(`${UICLAW_URL}/api/ui`, {
       method: "POST",
@@ -18,13 +53,12 @@ async function pushToUIClaw(data: Record<string, unknown>): Promise<void> {
       signal: AbortSignal.timeout(5000),
     });
     const body = await res.text();
-    console.log(`[UIClaw Plugin] Push result: ${res.status} ${body}`);
+    console.log(`[UIClaw Plugin] Push: ${res.status} ${body.slice(0, 200)}`);
   } catch (e: any) {
     console.error(`[UIClaw Plugin] Push error: ${e.message}`);
   }
 }
 
-// In-memory UI state per chat
 const uiSessions = new Map<string, { currentUi: any; pendingForms: Map<string, { resolve: (v: any) => void }> }>();
 
 function getSession(id: string) {
@@ -35,14 +69,13 @@ function getSession(id: string) {
 export default function register(api: any) {
   const log = api.logger ?? console;
 
-  // ── Tool: uiclaw_render ─────────────────────────────────
   api.registerTool({
     name: "uiclaw_render",
-    description: `Push a rich UI layout to the UIClaw web workspace panel. Use when you want to display structured visual content separate from chat text.
+    description: `Push a rich UI layout to the UIClaw web workspace panel.
 
-Component types: Stack (container), Markdown (formatted text), Card (titled info card), DataTable (rows/columns), Canvas (custom HTML/SVG/JS), ImageGrid (image gallery), ColorPalette (color swatches).
+Component types: Stack, Markdown, Card, DataTable, Canvas, ImageGrid, ColorPalette.
 
-Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "icon": "💰", "content": "$2.3M" }, { "type": "DataTable", "columns": ["Q","Rev"], "rows": [["Q1","$500K"]] }] }`,
+Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "icon": "💰", "content": "$2.3M" }] }`,
     parameters: {
       type: "object",
       properties: {
@@ -53,24 +86,17 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
     },
     async execute(_ctx: any, params: { spec: any; replace?: boolean }) {
       const chatId = typeof _ctx === "string" ? _ctx : _ctx?.sessionKey ?? "default";
-      const session = getSession(chatId);
-      session.currentUi = params.spec;
-
-      // Push UI spec to UIClaw server via HTTP
-      await pushToUIClaw({
-        type: "ui.replace",
-        spec: params.spec,
-        replace: params.replace ?? true,
-      });
-
+      getSession(chatId).currentUi = params.spec;
+      await pushToUIClaw({ type: "ui.replace", spec: params.spec, replace: params.replace ?? true });
       return { content: [{ type: "text", text: `UI rendered (${countNodes(params.spec)} components)` }] };
     },
   });
 
-  // ── Tool: uiclaw_canvas ─────────────────────────────────
   api.registerTool({
     name: "uiclaw_canvas",
-    description: "Render custom HTML/CSS/JS in the UIClaw web workspace. Use for charts, visualizations, interactive widgets, or any custom rendering.",
+    description: `Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk — only a summary stays in context.
+
+To modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.`,
     parameters: {
       type: "object",
       properties: {
@@ -81,21 +107,45 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
       required: ["html"],
     },
     async execute(_ctx: any, params: { html: string; height?: number; title?: string }) {
+      const saved = saveInterface(params.html, params.title);
       await pushToUIClaw({
         type: "ui.replace",
         spec: { type: "Canvas", html: params.html, height: params.height ?? 400, title: params.title },
-        replace: false,
+        replace: true,
+        title: params.title,
       });
-      return { content: [{ type: "text", text: "Canvas rendered." }] };
+      return {
+        content: [{
+          type: "text",
+          text: `Canvas rendered and saved.\n- ID: ${saved.id}\n- Size: ${saved.lines} lines\n- Title: ${params.title ?? "untitled"}\n\nUse uiclaw_read("${saved.id}") to recall code for modifications.`,
+        }],
+      };
     },
   });
 
-  // ── Tool: uiclaw_form ───────────────────────────────────
+  api.registerTool({
+    name: "uiclaw_read",
+    description: "Read the HTML code of a previously rendered Canvas interface. Use before modifying an existing interface.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Interface ID from a previous uiclaw_canvas result" },
+      },
+      required: ["id"],
+    },
+    async execute(_ctx: any, params: { id: string }) {
+      const html = loadInterface(params.id);
+      if (!html) {
+        const available = listInterfaces();
+        return { content: [{ type: "text", text: `Not found: "${params.id}"\n\nAvailable:\n${available.map(i => `- ${i.id} (${i.lines} lines, ${i.sizeKb}KB)`).join("\n") || "none"}` }] };
+      }
+      return { content: [{ type: "text", text: html }] };
+    },
+  });
+
   api.registerTool({
     name: "uiclaw_form",
-    description: `Show a form in the UIClaw web workspace and wait for user input. Field types: text, textarea, select, number, email, url, checkbox, color, date.
-
-Example: { "title": "Preferences", "fields": [{ "id": "style", "label": "Style", "type": "select", "options": ["Minimal","Bold"] }, { "id": "color", "label": "Color", "type": "color" }] }`,
+    description: `Show a form in the UIClaw workspace and wait for user input. Field types: text, textarea, select, number, email, url, checkbox, color, date.`,
     parameters: {
       type: "object",
       properties: {
@@ -106,11 +156,8 @@ Example: { "title": "Preferences", "fields": [{ "id": "style", "label": "Style",
           items: {
             type: "object",
             properties: {
-              id: { type: "string" },
-              label: { type: "string" },
-              type: { type: "string" },
-              placeholder: { type: "string" },
-              options: { type: "array", items: { type: "string" } },
+              id: { type: "string" }, label: { type: "string" }, type: { type: "string" },
+              placeholder: { type: "string" }, options: { type: "array", items: { type: "string" } },
               required: { type: "boolean" },
             },
             required: ["id", "label", "type"],
@@ -123,39 +170,25 @@ Example: { "title": "Preferences", "fields": [{ "id": "style", "label": "Style",
       const formId = `form_${Date.now()}`;
       const chatId = typeof _ctx === "string" ? _ctx : _ctx?.sessionKey ?? "default";
       const session = getSession(chatId);
-
       await pushToUIClaw({ type: "ui.form", formId, ...params });
-
       const result = await new Promise<any>((resolve) => {
         session.pendingForms.set(formId, { resolve });
-        setTimeout(() => {
-          if (session.pendingForms.has(formId)) {
-            session.pendingForms.delete(formId);
-            resolve({ _timeout: true });
-          }
-        }, 5 * 60_000);
+        setTimeout(() => { if (session.pendingForms.has(formId)) { session.pendingForms.delete(formId); resolve({ _timeout: true }); } }, 5 * 60_000);
       });
-
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
   });
 
-  // ── RPC: form submit ────────────────────────────────────
   try {
     api.registerGatewayMethod?.("uiclaw.form.submit", ({ params, respond }: any) => {
       const { chatId, formId, values } = params;
       const session = uiSessions.get(chatId);
-      if (session?.pendingForms.has(formId)) {
-        session.pendingForms.get(formId)!.resolve(values);
-        session.pendingForms.delete(formId);
-        respond(true, { ok: true });
-      } else {
-        respond(false, { error: "No pending form" });
-      }
+      if (session?.pendingForms.has(formId)) { session.pendingForms.get(formId)!.resolve(values); session.pendingForms.delete(formId); respond(true, { ok: true }); }
+      else respond(false, { error: "No pending form" });
     });
-  } catch { /* RPC registration optional */ }
+  } catch {}
 
-  log.info("[UIClaw] Plugin loaded: uiclaw_render, uiclaw_canvas, uiclaw_form tools registered");
+  log.info("[UIClaw] Plugin loaded: uiclaw_render, uiclaw_canvas, uiclaw_form, uiclaw_read");
 }
 
 function countNodes(spec: any): number {
