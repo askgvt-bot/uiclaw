@@ -27,6 +27,21 @@ type FormSpec = {
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
+type RegistryEntry = {
+  id: string;
+  name: string;
+  description?: string;
+  tags?: string[];
+  screenshotFile?: string;
+  hasScreenshot?: boolean;
+  useCount?: number;
+};
+
+type RegistryIndex = {
+  version?: string;
+  interfaces?: RegistryEntry[];
+};
+
 // ─── WebSocket Hook ──────────────────────────────────────────
 function useUIClaw() {
   const wsRef = useRef<WebSocket | null>(null);
@@ -232,10 +247,52 @@ export function App() {
   const [input, setInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [chatWidth, setChatWidth] = useState(380);
+  const [registryOpen, setRegistryOpen] = useState(false);
+  const [registryEntries, setRegistryEntries] = useState<RegistryEntry[]>([]);
+  const [registryQuery, setRegistryQuery] = useState("");
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [selectedRegistryId, setSelectedRegistryId] = useState<string | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!registryOpen) return;
+    let active = true;
+    setRegistryLoading(true);
+    setRegistryError(null);
+    fetch("/api/registry")
+      .then((res) => {
+        if (!res.ok) throw new Error(`Registry load failed (${res.status})`);
+        return res.json();
+      })
+      .then((data: RegistryIndex | RegistryEntry[]) => {
+        if (!active) return;
+        if (Array.isArray(data)) setRegistryEntries(data);
+        else setRegistryEntries(data.interfaces ?? []);
+      })
+      .catch((err: Error) => {
+        if (!active) return;
+        setRegistryError(err.message);
+      })
+      .finally(() => {
+        if (!active) return;
+        setRegistryLoading(false);
+      });
+    return () => { active = false; };
+  }, [registryOpen]);
+
+  const filteredRegistry = registryEntries.filter((entry) => {
+    if (!registryQuery.trim()) return true;
+    const needle = registryQuery.toLowerCase();
+    return (
+      entry.name?.toLowerCase().includes(needle) ||
+      entry.description?.toLowerCase().includes(needle) ||
+      entry.tags?.some((tag) => tag.toLowerCase().includes(needle))
+    );
+  });
 
   const handleSend = () => {
     const text = input.trim();
@@ -252,6 +309,19 @@ export function App() {
           <span className="text-lg font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
             ✨ UIClaw
           </span>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              title="Interface Registry"
+              onClick={() => setRegistryOpen((prev) => !prev)}
+              aria-pressed={registryOpen}
+              className="h-8 w-8 rounded-md bg-slate-800/60 text-slate-300 hover:text-amber-300 hover:bg-slate-800/90 hover:shadow-[0_0_14px_rgba(251,191,36,0.35)] transition-all"
+            >
+              <span className="text-sm">📚</span>
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
           <div className={`flex items-center gap-1.5 ${
@@ -351,8 +421,150 @@ export function App() {
               <WelcomeScreen onExample={sendMessage} />
             )}
           </div>
+          <RegistryBrowser
+            isOpen={registryOpen}
+            entries={filteredRegistry}
+            loading={registryLoading}
+            error={registryError}
+            searchValue={registryQuery}
+            onSearchChange={setRegistryQuery}
+            selectedId={selectedRegistryId}
+            onClose={() => setRegistryOpen(false)}
+            onSelect={(entry) => {
+              setSelectedRegistryId(entry.id);
+              sendMessage(`Load interface: ${entry.name}`);
+            }}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Registry Browser ────────────────────────────────────────
+function RegistryBrowser({
+  isOpen,
+  entries,
+  loading,
+  error,
+  searchValue,
+  onSearchChange,
+  selectedId,
+  onClose,
+  onSelect,
+}: {
+  isOpen: boolean;
+  entries: RegistryEntry[];
+  loading: boolean;
+  error: string | null;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  selectedId: string | null;
+  onClose: () => void;
+  onSelect: (entry: RegistryEntry) => void;
+}) {
+  return (
+    <div className={`absolute inset-0 z-20 ${isOpen ? "pointer-events-auto" : "pointer-events-none"}`}>
+      <div
+        className={`absolute inset-0 bg-slate-950/40 backdrop-blur-sm transition-opacity ${
+          isOpen ? "opacity-100" : "opacity-0"
+        }`}
+        onClick={onClose}
+      />
+      <aside
+        className={`absolute top-0 right-0 h-full w-[500px] max-w-full bg-slate-950 border-l border-slate-800/70 shadow-2xl transition-transform duration-300 ease-out ${
+          isOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800/70 bg-slate-900/80">
+          <div className="text-sm font-semibold text-slate-200">Interface Registry</div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-slate-800/40 border border-slate-700/60 text-slate-300 hover:text-amber-300 hover:border-amber-400/70 transition"
+            aria-label="Close registry"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="p-4 border-b border-slate-800/60">
+          <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800/70 rounded-xl px-3 py-2">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" className="text-slate-500">
+              <path d="M10 2a8 8 0 1 0 5.29 14.02l4.35 4.34a1 1 0 0 0 1.42-1.41l-4.35-4.35A8 8 0 0 0 10 2zm0 2a6 6 0 1 1 0 12 6 6 0 0 1 0-12z" />
+            </svg>
+            <input
+              type="text"
+              value={searchValue}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search interfaces, tags, descriptions"
+              className="flex-1 bg-transparent outline-none text-sm text-slate-200 placeholder:text-slate-500"
+            />
+          </div>
+        </div>
+        <div className="p-4 overflow-y-auto h-[calc(100%-128px)]">
+          {loading && (
+            <div className="text-sm text-slate-400">Loading registry...</div>
+          )}
+          {!loading && error && (
+            <div className="text-sm text-red-400">{error}</div>
+          )}
+          {!loading && !error && entries.length === 0 && (
+            <div className="text-sm text-slate-500">No interfaces match that search.</div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            {entries.map((entry) => (
+              <button
+                key={entry.id}
+                onClick={() => onSelect(entry)}
+                className={`text-left bg-slate-900/60 border rounded-xl p-3 space-y-2 transition ${
+                  selectedId === entry.id
+                    ? "border-amber-400/70 shadow-[0_0_18px_rgba(251,191,36,0.25)]"
+                    : "border-slate-800/70 hover:border-amber-400/50"
+                }`}
+              >
+                <div className="aspect-[4/3] bg-slate-900/80 rounded-lg overflow-hidden border border-slate-800/70">
+                  {entry.screenshotFile ? (
+                    <img src={entry.screenshotFile} alt={entry.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-xs text-slate-500">
+                      No screenshot
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-slate-200">{entry.name}</div>
+                  <div className="text-[10px] uppercase tracking-wider px-2 py-1 rounded-full bg-slate-800/60 text-amber-300/90">
+                    Use Count {entry.useCount ?? 0}
+                  </div>
+                </div>
+                {entry.description && (
+                  <div
+                    className="text-xs text-slate-400"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 2,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {entry.description}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1">
+                  {(entry.tags ?? []).map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

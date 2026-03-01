@@ -16,6 +16,8 @@ const PORT = parseInt(process.env.UICLAW_PORT ?? "3800", 10);
 const HOST = process.env.UICLAW_HOST ?? "127.0.0.1";
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:18789";
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+const REGISTRY_ROOT = "/Users/nicholashalstead/.openclaw/workspace/uiclaw-registry";
+const REGISTRY_INDEX = join(REGISTRY_ROOT, "index.json");
 
 // Per-browser-client state
 interface ClientState {
@@ -59,6 +61,28 @@ const httpServer = createServer((req, res) => {
     return;
   }
 
+  // ── API: Registry index ──
+  if (req.method === "GET" && req.url === "/api/registry") {
+    try {
+      const raw = readFileSync(REGISTRY_INDEX, "utf8");
+      const data = JSON.parse(raw);
+      const interfaces = Array.isArray(data.interfaces) ? data.interfaces : [];
+      const rewritten = interfaces.map((entry: any) => {
+        if (!entry?.screenshotFile) return entry;
+        const absPath = entry.screenshotFile.startsWith("/")
+          ? entry.screenshotFile
+          : join(REGISTRY_ROOT, entry.screenshotFile);
+        return { ...entry, screenshotFile: `/files${absPath}` };
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...data, interfaces: rewritten }));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
   // ── Serve local files referenced by agents (images, etc.) ──
   if (req.method === "GET" && req.url?.startsWith("/files/")) {
     const filePath = decodeURIComponent(req.url.slice("/files".length)); // keeps leading /
@@ -85,7 +109,6 @@ const httpServer = createServer((req, res) => {
     stream.pipe(res);
     return;
   }
-
   const webDist = resolve(import.meta.dirname, "../../web/dist");
   
   if (!existsSync(webDist)) {
