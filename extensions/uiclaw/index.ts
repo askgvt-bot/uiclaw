@@ -138,9 +138,21 @@ export default function register(api: any) {
           (t.includes("form") && n.includes("form"));
       });
       if (matches.length > 0) {
-        return {
-          content: [{ type: "text", text: "STOP — a matching interface already exists: " + matches[0].id + " (" + matches[0].name + "). Use uiclaw_load(id=\"" + matches[0].id + "\") instead of rebuilding." }],
-        };
+        // Load the existing interface directly — skip the second round-trip
+        var matchId = matches[0].id;
+        var matchPath = join(INTERFACES_DIR, matchId + ".html");
+        if (existsSync(matchPath)) {
+          var existingHtml = readFileSync(matchPath, "utf-8");
+          await pushToUIClaw({
+            type: "ui.replace",
+            spec: { type: "Canvas", html: existingHtml, height: params.height ?? 400, title: matches[0].name },
+            replace: true,
+            skipRegister: true,
+          });
+          return {
+            content: [{ type: "text", text: "Loaded existing interface: " + matchId + " (" + matches[0].name + ", " + matches[0].lines + " lines). Rendered from registry." }],
+          };
+        }
       }
       var saved = saveInterface(params.html, params.title);
       await pushToUIClaw({
