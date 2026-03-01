@@ -7,7 +7,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { readFileSync, existsSync, createReadStream } from "fs";
+import { readFileSync, existsSync, createReadStream, writeFileSync, mkdirSync } from "fs";
 import { resolve, join } from "path";
 import { GatewayClient } from "./gateway-client.js";
 import { autoLayout, normalizeSpec, mergeSpecs, type UISpec } from "@uiclaw/ui-engine";
@@ -200,6 +200,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 
     case "ui.get": {
       send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
+    autoRegisterInterface(state.currentUi!);
       break;
     }
 
@@ -328,6 +329,7 @@ function handleGatewayEvent(clientId: string, event: any) {
     const replace = payload.replace ?? true;
     state.currentUi = mergeSpecs(state.currentUi, spec, replace);
     send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
+    autoRegisterInterface(state.currentUi!);
   }
 
   if (eventType === "uiclaw.form.show") {
@@ -365,3 +367,132 @@ httpServer.listen(PORT, HOST, () => {
   Auth:     ${GATEWAY_TOKEN ? "token ✓" : "none (loopback)"}
 `);
 });
+
+// ─── Auto-Registration ──────────────────────────────────────
+import { createHash } from "crypto";
+import { execFile } from "child_process";
+
+const REGISTRY_SPECS = join(REGISTRY_ROOT, "specs");
+const REGISTRY_SCREENSHOTS = join(REGISTRY_ROOT, "screenshots");
+
+function autoRegisterInterface(spec: UISpec) {
+  try {
+    // Generate stable ID from spec content
+    const specStr = JSON.stringify(spec, null, 2);
+    const hash = createHash("sha256").update(specStr).digest("hex").slice(0, 12);
+    const id = `ui_${hash}`;
+    
+    // Derive name and description from spec
+    const name = (spec as any).title || (spec as any).name || (spec as any).type || "Untitled Interface";
+    const description = (spec as any).description || `Auto-registered ${(spec as any).type || "interface"}`;
+    const tags = inferTags(spec);
+    
+    // Ensure dirs exist
+    mkdirSync(REGISTRY_SPECS, { recursive: true });
+    mkdirSync(REGISTRY_SCREENSHOTS, { recursive: true });
+    
+    // Save spec
+    const specFile = `specs/${id}.json`;
+    writeFileSync(join(REGISTRY_ROOT, specFile), specStr);
+    
+    // Update index
+    const indexPath = join(REGISTRY_ROOT, "index.json");
+    let index: any = { version: 1, interfaces: [] };
+    if (existsSync(indexPath)) {
+      index = JSON.parse(readFileSync(indexPath, "utf-8"));
+    }
+    
+    const existing = index.interfaces.findIndex((e: any) => e.id === id);
+    const now = new Date().toISOString();
+    const entry = {
+      id,
+      name,
+      description,
+      type: (spec as any).type || "render",
+      tags,
+      inputs: { description: "", schema: {} },
+      outputs: { description: "", interactive: false },
+      specFile,
+      screenshotFile: `screenshots/${id}.png`,
+      hasScreenshot: false,
+      created: now,
+      lastUsed: now,
+      useCount: 1,
+    };
+    
+    if (existing >= 0) {
+      // Update existing — bump useCount and lastUsed
+      index.interfaces[existing].useCount = (index.interfaces[existing].useCount || 0) + 1;
+      index.interfaces[existing].lastUsed = now;
+    } else {
+      index.interfaces.push(entry);
+    }
+    
+    writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    console.log(`[Registry] Auto-registered: ${id} (${name})`);
+    
+    // Async: capture screenshot via Playwright
+    captureScreenshot(id, spec);
+    
+  } catch (e: any) {
+    console.error(`[Registry] Auto-register failed:`, e.message);
+  }
+}
+
+function inferTags(spec: any): string[] {
+  const tags: string[] = [];
+  const str = JSON.stringify(spec).toLowerCase();
+  if (str.includes("table") || str.includes("datatable") || str.includes("spreadsheet")) tags.push("table", "data");
+  if (str.includes("card")) tags.push("card");
+  if (str.includes("chart") || str.includes("graph")) tags.push("chart", "visualization");
+  if (str.includes("form") || str.includes("input")) tags.push("form");
+  if (str.includes("dashboard")) tags.push("dashboard");
+  if (str.includes("status") || str.includes("health")) tags.push("status");
+  if (str.includes("markdown")) tags.push("content");
+  if (str.includes("canvas")) tags.push("canvas", "interactive");
+  if (str.includes("image") || str.includes("gallery")) tags.push("media");
+  if (tags.length === 0) tags.push("general");
+  return [...new Set(tags)];
+}
+
+function captureScreenshot(id: string, _spec: UISpec) {
+  const screenshotPath = join(REGISTRY_SCREENSHOTS, `${id}.png`);
+  const url = `http://${HOST}:${PORT}`;
+  
+  // Use Playwright to screenshot the current rendered UI
+  const script = `
+    const { chromium } = require('playwright');
+    (async () => {
+      const browser = await chromium.launch();
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      await page.goto('${url}');
+      await page.waitForTimeout(2000);
+      // Screenshot just the workspace panel (right side)
+      const workspace = await page.$('.flex-1.flex.flex-col.overflow-hidden.relative');
+      if (workspace) {
+        await workspace.screenshot({ path: '${screenshotPath}' });
+      } else {
+        await page.screenshot({ path: '${screenshotPath}' });
+      }
+      await browser.close();
+    })();
+  `;
+  
+  execFile("node", ["-e", script], { timeout: 15000 }, (err) => {
+    if (err) {
+      console.error(`[Registry] Screenshot failed for ${id}:`, err.message);
+      return;
+    }
+    // Update hasScreenshot in index
+    try {
+      const indexPath = join(REGISTRY_ROOT, "index.json");
+      const index = JSON.parse(readFileSync(indexPath, "utf-8"));
+      const entry = index.interfaces.find((e: any) => e.id === id);
+      if (entry) {
+        entry.hasScreenshot = true;
+        writeFileSync(indexPath, JSON.stringify(index, null, 2));
+      }
+      console.log(`[Registry] Screenshot captured: ${id}`);
+    } catch {}
+  });
+}
