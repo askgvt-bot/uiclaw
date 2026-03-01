@@ -424,6 +424,10 @@ function handleSharedGatewayEvent(event: any) {
   // Chat history (from our own request)
   if (eventType === "chat.history") {
     const messages = payload.messages ?? event.messages ?? [];
+    // If session is empty/new, reset context so system prompt gets re-sent
+    if (messages.length === 0 && sharedGateway) {
+      sharedGateway.resetContext();
+    }
     broadcast({
       type: "chat.history",
       entries: messages.map((m: any) => ({

@@ -179,6 +179,7 @@ export class GatewayClient {
   }
 
   private contextSent = false;
+  resetContext() { this.contextSent = false; }
   private static CONTEXT = `[System: You are responding through UIClaw — a rich web UI at ui.gvtbot.net. The user sees a chat panel (left) and a workspace panel (right).
 
 RULES:
@@ -213,7 +214,7 @@ You do NOT need paired nodes or canvas workarounds — the web UI IS your render
     const key = randomUUID().slice(0, 12);
     const sk = sessionKey ?? this.opts.sessionKey ?? "uiclaw";
     
-    // Prepend context to first message only
+    // Prepend context to first message only (reset if session was cleared)
     let message = text;
     if (!this.contextSent) {
       message = GatewayClient.CONTEXT + text;
