@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import html2canvas from "html2canvas";
 import { RenderComponent, type UIComponent } from "./components";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -277,34 +276,11 @@ export function App() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Auto-capture screenshot when a new UI renders
-  useEffect(() => {
-    if (!uiSpec) return;
-    
-    // For Canvas (iframe) components: request screenshot from inside the iframe
-    const timer = setTimeout(() => {
-      const iframes = workspaceRef.current?.querySelectorAll("iframe");
-      if (iframes && iframes.length > 0) {
-        // Ask the iframe to capture itself
-        iframes.forEach((iframe) => {
-          try {
-            iframe.contentWindow?.postMessage({ source: "uiclaw-parent", type: "capture-screenshot" }, "*");
-          } catch (e) {
-            console.error("[UIClaw] Could not request iframe screenshot:", e);
-          }
-        });
-      }
-      // Screenshots captured via iframe postMessage → WebSocket canvas.action path
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [uiSpec]);
+  // Screenshots captured server-side via Playwright — no browser capture needed
 
-  // Screenshot data from Canvas iframes goes through WebSocket canvas.action handler
+  // Screenshots handled server-side
   useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.data?.source !== "uiclaw-canvas" || e.data?.type !== "screenshot-data") return;
-      // Already handled by the postMessage → canvas.action → WebSocket path
-    };
+    const handler = (e: MessageEvent) => {};
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
   }, []);

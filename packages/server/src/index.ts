@@ -219,15 +219,20 @@ wss.on("connection", (ws) => {
 
 // ─── Client → Gateway ────────────────────────────────────────
 
-function saveScreenshotFromBase64(dataUrl: string) {
-  const id = sharedState.lastRenderedId;
-  if (!id) { console.log("[Registry] No lastRenderedId — skipping screenshot"); return; }
+async function captureScreenshot(id: string) {
+  const htmlPath = join(REGISTRY_ROOT, "interfaces", id + ".html");
+  if (!existsSync(htmlPath)) { console.log("[Registry] No HTML file for " + id + " — skipping screenshot"); return; }
   try {
-    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, "base64");
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    const htmlContent = readFileSync(htmlPath, "utf-8");
+    await page.setContent(htmlContent, { waitUntil: "networkidle" });
+    await page.waitForTimeout(500); // let animations settle
     mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
     const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
-    writeFileSync(screenshotPath, buffer);
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+    await browser.close();
     // Update index.json
     const indexPath = join(REGISTRY_ROOT, "index.json");
     if (existsSync(indexPath)) {
@@ -235,12 +240,14 @@ function saveScreenshotFromBase64(dataUrl: string) {
       const entry = (idx.interfaces || []).find((e: any) => e.id === id);
       if (entry) {
         entry.screenshotFile = "screenshots/" + id + ".png";
+        entry.hasScreenshot = true;
         writeFileSync(indexPath, JSON.stringify(idx, null, 2));
       }
     }
-    console.log("[Registry] Screenshot saved for " + id + " (" + Math.round(buffer.length / 1024) + "KB)");
+    const size = Math.round(statSync(screenshotPath).size / 1024);
+    console.log("[Registry] Screenshot captured for " + id + " (" + size + "KB)");
   } catch (e: any) {
-    console.error("[Registry] Screenshot save error: " + e.message);
+    console.error("[Registry] Screenshot capture error: " + e.message);
   }
 }
 
@@ -279,16 +286,8 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
     case "canvas.action": {
       const payload = typeof msg.data === "string" ? msg.data : JSON.stringify(msg.data);
       const actionType = msg.actionType ?? "action";
-      // Screenshots go directly to registry — never into the agent session
-      if (actionType === "screenshot-data" && typeof payload === "string" && payload.startsWith("data:image")) {
-        console.log("[UIClaw] Screenshot received (" + Math.round(payload.length / 1024) + "KB) — saving to registry, NOT sending to agent");
-        try {
-          saveScreenshotFromBase64(payload);
-        } catch (e: any) {
-          console.error("[UIClaw] Screenshot save error: " + e.message);
-        }
-        break;
-      }
+      // Screenshot-data from browser ignored — screenshots captured server-side via Playwright
+      if (actionType === "screenshot-data") break;
       // All other canvas actions go to the agent
       const structured = `[CANVAS_ACTION type="${actionType}"]\n${payload}\n[/CANVAS_ACTION]`;
       try {
@@ -419,6 +418,8 @@ function handleSharedGatewayEvent(event: any) {
     if (html) {
       const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
       sharedState.lastRenderedId = "ui_" + hash;
+      // Capture screenshot server-side after a short delay
+      setTimeout(() => captureScreenshot("ui_" + hash), 2000);
     }
     // autoRegisterInterface — disabled, plugin handles registration
   }
