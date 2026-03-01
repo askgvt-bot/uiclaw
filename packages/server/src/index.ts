@@ -106,34 +106,33 @@ const httpServer = createServer((req, res) => {
         const base64Data = image.replace(/^data:image\/png;base64,/, "");
         const buffer = Buffer.from(base64Data, "base64");
         
-        // Find the most recently registered interface
-        const indexPath = join(REGISTRY_ROOT, "index.json");
-        if (!existsSync(indexPath)) {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "No registry" }));
-          return;
-        }
-        const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-        const latest = index.interfaces
-          .filter((e: any) => !e.hasScreenshot)
-          .sort((a: any, b: any) => new Date(b.created).getTime() - new Date(a.created).getTime())[0];
-        
-        if (!latest) {
+        // Use lastRenderedId to match screenshot to the correct interface
+        const targetId = sharedState.lastRenderedId;
+        if (!targetId) {
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, skipped: true, reason: "all have screenshots" }));
+          res.end(JSON.stringify({ ok: true, skipped: true, reason: "no lastRenderedId" }));
           return;
         }
         
-        const screenshotPath = join(REGISTRY_ROOT, latest.screenshotFile || `screenshots/${latest.id}.png`);
+        const ssPath = join(REGISTRY_ROOT, "screenshots", targetId + ".png");
         mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
-        writeFileSync(screenshotPath, buffer);
+        writeFileSync(ssPath, buffer);
         
-        latest.hasScreenshot = true;
-        writeFileSync(indexPath, JSON.stringify(index, null, 2));
+        // Update index.json entry
+        const indexPath = join(REGISTRY_ROOT, "index.json");
+        if (existsSync(indexPath)) {
+          const index = JSON.parse(readFileSync(indexPath, "utf-8"));
+          const entry = (index.interfaces || []).find((e: any) => e.id === targetId);
+          if (entry) {
+            entry.screenshotFile = "screenshots/" + targetId + ".png";
+            entry.hasScreenshot = true;
+            writeFileSync(indexPath, JSON.stringify(index, null, 2));
+          }
+        }
         
-        console.log(`[Registry] Screenshot saved for ${latest.id} (${latest.name})`);
+        console.log("[Registry] Screenshot (POST) saved for " + targetId + " (" + Math.round(buffer.length / 1024) + "KB)");
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, id: latest.id }));
+        res.end(JSON.stringify({ ok: true, id: targetId }));
       } catch (e: any) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
