@@ -212,14 +212,6 @@ wss.on("connection", (ws) => {
     onError: (error) => send(ws, { type: "error", message: error }),
   });
 
-  // Close existing clients — only one active connection allowed
-  for (const [oldId, oldState] of clients) {
-    console.log("[UIClaw] Closing old client: " + oldId);
-    try { oldState.gateway.close(); } catch {}
-    try { oldState.ws.close(); } catch {}
-    clients.delete(oldId);
-  }
-
   const state: ClientState = { ws, gateway, currentUi: null, lastUserMessage: null };
   clients.set(clientId, state);
   gateway.connect();
