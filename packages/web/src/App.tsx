@@ -52,6 +52,7 @@ function useUIClaw() {
   const [activeForm, setActiveForm] = useState<FormSpec | null>(null);
   const [agentEvents, setAgentEvents] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingMode, setLoadingMode] = useState<"building" | "loading">("building");
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -156,6 +157,17 @@ function useUIClaw() {
           break;
         case "agent.event":
           setAgentEvents((prev) => [...prev.slice(-50), msg.event]);
+          // Detect tool starts to set loading mode
+          if (msg.eventType === "tool.start" || msg.data?.tool) {
+            const tool = msg.data?.tool ?? msg.eventType ?? "";
+            if (tool.includes("uiclaw_load")) {
+              setLoadingMode("loading");
+              setIsLoading(true);
+            } else if (tool.includes("uiclaw_canvas")) {
+              setLoadingMode("building");
+              setIsLoading(true);
+            }
+          }
           break;
       }
     };
@@ -208,7 +220,7 @@ function useUIClaw() {
     setActiveForm(null);
   }, []);
 
-  return { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, sendMessage, submitForm };
+  return { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, loadingMode, sendMessage, submitForm };
 }
 
 // ─── Chat Markdown ───────────────────────────────────────────
@@ -244,7 +256,7 @@ function ChatMarkdown({ content }: { content: string }) {
 
 // ─── Main App ────────────────────────────────────────────────
 export function App() {
-  const { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, sendMessage, submitForm } = useUIClaw();
+  const { connectionState, messages, uiSpec, activeForm, agentEvents, isLoading, loadingMode, sendMessage, submitForm } = useUIClaw();
   const [input, setInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -471,7 +483,10 @@ export function App() {
                   <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}} />
                   <div className="w-2 h-2 bg-amber-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}} />
                 </div>
-                <span className="text-sm text-slate-400">Building UI...</span>
+                {loadingMode === "loading" 
+                  ? <span className="text-sm text-slate-400">Loading prebuilt UI...</span>
+                  : <span className="text-sm text-slate-400">Building UI...</span>
+                }
               </div>
             </div>
           )}
