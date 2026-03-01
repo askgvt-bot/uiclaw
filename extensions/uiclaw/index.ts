@@ -125,6 +125,23 @@ export default function register(api: any) {
       required: ["html"],
     },
     async execute(_ctx: any, params: { html: string; height?: number; title?: string }) {
+      // Auto-check registry — if a similar interface exists, suggest loading it instead
+      var matches = listInterfaces().filter(function(i) {
+        if (!params.title) return false;
+        var t = params.title.toLowerCase();
+        var n = i.name.toLowerCase();
+        return n.includes(t) || t.includes(n) || 
+          (t.includes("spreadsheet") && n.includes("spreadsheet")) ||
+          (t.includes("logo") && n.includes("logo")) ||
+          (t.includes("chart") && n.includes("chart")) ||
+          (t.includes("dashboard") && n.includes("dashboard")) ||
+          (t.includes("form") && n.includes("form"));
+      });
+      if (matches.length > 0) {
+        return {
+          content: [{ type: "text", text: "STOP — a matching interface already exists: " + matches[0].id + " (" + matches[0].name + "). Use uiclaw_load(id=\"" + matches[0].id + "\") instead of rebuilding." }],
+        };
+      }
       var saved = saveInterface(params.html, params.title);
       await pushToUIClaw({
         type: "ui.replace",
