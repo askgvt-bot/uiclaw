@@ -178,41 +178,24 @@ function CanvasComponent({ component }: { component: UIComponent }) {
 
   const darkStyles = `<style>body{background:#1e293b!important;color:#e2e8f0!important;font-family:system-ui,sans-serif;margin:0;padding:16px;} a{color:#38bdf8!important;} h1,h2,h3{color:#f1f5f9!important;}</style>`;
   // Inject a postMessage bridge so Canvas HTML can send data back to the app
-  const bridge = `<script>
+  const bridge = `<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script>
     function sendToApp(type, data) {
       window.parent.postMessage({ source: 'uiclaw-canvas', type, data }, '*');
     }
-    // Listen for screenshot capture requests from parent
     window.addEventListener('message', function(e) {
       if (e.data && e.data.source === 'uiclaw-parent' && e.data.type === 'capture-screenshot') {
-        // Use html2canvas if available, otherwise canvas API
-        try {
-          var c = document.createElement('canvas');
-          var scale = 1;
-          c.width = document.documentElement.scrollWidth * scale;
-          c.height = document.documentElement.scrollHeight * scale;
-          var ctx = c.getContext('2d');
-          // Draw background
-          ctx.fillStyle = getComputedStyle(document.body).backgroundColor || '#1e293b';
-          ctx.fillRect(0, 0, c.width, c.height);
-          // Use foreignObject SVG trick to render HTML to canvas
-          var data = '<svg xmlns="http://www.w3.org/2000/svg" width="'+c.width+'" height="'+c.height+'">' +
-            '<foreignObject width="100%" height="100%">' +
-            new XMLSerializer().serializeToString(document.documentElement) +
-            '</foreignObject></svg>';
-          var img = new Image();
-          img.onload = function() {
-            ctx.drawImage(img, 0, 0);
-            var dataUrl = c.toDataURL('image/png');
+        if (typeof html2canvas === 'function') {
+          html2canvas(document.body, {
+            backgroundColor: getComputedStyle(document.body).backgroundColor || '#1e293b',
+            scale: 1,
+            logging: false,
+          }).then(function(canvas) {
+            var dataUrl = canvas.toDataURL('image/png');
             window.parent.postMessage({ source: 'uiclaw-canvas', type: 'screenshot-data', data: dataUrl }, '*');
-          };
-          img.onerror = function() {
-            // Fallback: just send a placeholder
-            window.parent.postMessage({ source: 'uiclaw-canvas', type: 'screenshot-data', data: null }, '*');
-          };
-          img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(data);
-        } catch(err) {
-          console.error('Screenshot capture failed inside iframe:', err);
+          }).catch(function(err) {
+            console.error('Screenshot failed:', err);
+          });
         }
       }
     });
