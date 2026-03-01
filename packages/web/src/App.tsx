@@ -162,15 +162,13 @@ function useUIClaw() {
           break;
         case "agent.event":
           setAgentEvents((prev) => [...prev.slice(-50), msg.event]);
-          // Detect tool starts to set loading mode
+          // Detect tool type for loading indicator text (but don't re-trigger loading)
           if (msg.eventType === "tool.start" || msg.data?.tool) {
             const tool = msg.data?.tool ?? msg.eventType ?? "";
             if (tool.includes("uiclaw_load")) {
               setLoadingMode("loading");
-              setIsLoading(true);
             } else if (tool.includes("uiclaw_canvas")) {
               setLoadingMode("building");
-              setIsLoading(true);
             }
           }
           break;
