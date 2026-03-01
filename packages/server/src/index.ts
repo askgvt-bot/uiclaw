@@ -234,6 +234,19 @@ wss.on("connection", (ws) => {
 
 // ─── Client → Gateway ────────────────────────────────────────
 
+function saveScreenshotFromBase64(dataUrl: string, currentUi: any) {
+  if (!currentUi) return;
+  const specStr = JSON.stringify(currentUi, null, 2);
+  const hash = createHash("sha256").update(specStr).digest("hex").slice(0, 12);
+  const id = "ui_" + hash;
+  const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  const buffer = Buffer.from(base64Data, "base64");
+  const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
+  mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
+  writeFileSync(screenshotPath, buffer);
+  console.log("[Registry] Screenshot saved for " + id + " (" + Math.round(buffer.length / 1024) + "KB)");
+}
+
 async function handleClientMessage(clientId: string, state: ClientState, msg: any) {
   switch (msg.type) {
     case "chat.send": {
@@ -266,10 +279,19 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
     }
 
     case "canvas.action": {
-      // Structured data from Canvas iframe — forward to agent without polluting chat
       const payload = typeof msg.data === "string" ? msg.data : JSON.stringify(msg.data);
       const actionType = msg.actionType ?? "action";
-      // Send as a hidden structured message — agent sees it, chat doesn't display it
+      // Screenshots go directly to registry — never into the agent session
+      if (actionType === "screenshot-data" && typeof payload === "string" && payload.startsWith("data:image")) {
+        console.log("[UIClaw] Screenshot received (" + Math.round(payload.length / 1024) + "KB) — saving to registry, NOT sending to agent");
+        try {
+          saveScreenshotFromBase64(payload, state.currentUi);
+        } catch (e: any) {
+          console.error("[UIClaw] Screenshot save error: " + e.message);
+        }
+        break;
+      }
+      // All other canvas actions go to the agent
       const structured = `[CANVAS_ACTION type="${actionType}"]\n${payload}\n[/CANVAS_ACTION]`;
       try {
         console.log(`[UIClaw] Canvas action: type=${actionType}, payload=${payload.slice(0, 200)}`);
