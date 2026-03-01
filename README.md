@@ -2,19 +2,37 @@
 
 **Rich dynamic web UI for OpenClaw agents.**
 
-UIClaw gives your OpenClaw agent a modern split-panel web interface — chat on the left, dynamic workspace on the right. The agent can push interactive forms, data tables, image grids, custom HTML canvases, and more to the workspace while keeping the conversation clean.
+UIClaw gives your OpenClaw agent a modern split-panel web interface — chat on the left, dynamic workspace on the right. Ask for anything and the agent builds it live: spreadsheets, dashboards, multi-step wizards, data tables, calculators. All interactive, all in the browser.
 
-![UIClaw Screenshot](https://ui.gvtbot.net/screenshot.png)
+## Examples
+
+> Every interface below was generated from a single natural-language prompt.
+
+| Spreadsheet | SaaS Unit Economics |
+|:-:|:-:|
+| ![Spreadsheet](docs/screenshots/spreadsheet.png) | ![SaaS Calculator](docs/screenshots/saas-calculator.png) |
+| *"Build me a quick spreadsheet to do some basic maths"* | *"Build a SaaS unit economics calculator"* |
+
+| Mood Board Builder | Influencer Directory |
+|:-:|:-:|
+| ![Mood Board](docs/screenshots/mood-board.png) | ![Influencer Directory](docs/screenshots/influencer-directory.png) |
+| *"Create a luxury product launch mood board builder"* | *"Find 30 Dubai luxury YouTubers with 1M+ subs"* |
+
+## How It Works
+
+You describe what you want in plain English. The agent builds a fully interactive HTML/JS interface and pushes it to the workspace panel. Interfaces are saved to a local registry so they load instantly next time.
+
+No templates. No drag-and-drop. Just describe it.
 
 ## Features
 
 - 💬 **Chat + Workspace** — Split-panel: conversation on the left, rich UI on the right
-- 🎨 **Dynamic UI Generation** — Agent pushes component trees (Cards, Tables, Markdown, Canvas, ImageGrid, Forms)
+- 🎨 **Dynamic UI Generation** — Agent builds full interactive interfaces from natural language
+- 📦 **Interface Registry** — Built interfaces are saved to disk and reloaded instantly on repeat requests
+- 📸 **Auto Screenshots** — Playwright captures a screenshot of every interface for the registry browser
 - 📝 **Smart Forms** — Collect structured input via `uiclaw_form` or custom Canvas HTML
-- 🖼️ **Image Serving** — Local file paths auto-transformed to servable URLs
-- 🔄 **Canvas Bridge** — Custom HTML can send structured data back to the agent via `sendToApp()` — no chat pollution
-- ⏳ **Loading States** — "Building UI..." overlay while the agent works
-- 🔌 **OpenClaw Plugin** — Registers `uiclaw_render`, `uiclaw_canvas`, `uiclaw_form` as agent tools
+- 🔄 **Canvas Bridge** — Custom HTML can send structured data back to the agent via `sendToApp()`
+- 🔌 **OpenClaw Plugin** — Registers `uiclaw_render`, `uiclaw_canvas`, `uiclaw_form`, `uiclaw_read`, `uiclaw_load` as agent tools
 - 🌐 **Works Anywhere** — Localhost or behind Cloudflare Tunnel
 
 ## Architecture
@@ -31,32 +49,19 @@ UIClaw gives your OpenClaw agent a modern split-panel web interface — chat on 
         ↕                        ↕
 ┌───────────────────────────────────────────────────────┐
 │  UIClaw Server (Node.js, port 3800)                   │
-│  • Bridges browser ↔ OpenClaw Gateway via WebSocket   │
+│  • Shared gateway — single OpenClaw connection        │
+│    shared across all browser clients                  │
 │  • POST /api/ui — receives UI specs from plugin       │
+│  • Playwright screenshots saved to registry           │
 │  • GET /files/* — serves local images/files           │
-│  • Transforms local paths → servable URLs             │
 └───────────────────┬───────────────────────────────────┘
                     ↕ Gateway WebSocket (JSON-RPC)
 ┌───────────────────────────────────────────────────────┐
 │  OpenClaw Gateway                                     │
 │  • Runs the agent session (agent:main:uiclaw)         │
-│  • Plugin tools: uiclaw_render, uiclaw_canvas,        │
-│    uiclaw_form push specs via HTTP to UIClaw server    │
+│  • Plugin tools push specs via HTTP to UIClaw server   │
 └───────────────────────────────────────────────────────┘
 ```
-
-### Data Flow
-
-**User → Agent:**
-1. User types in chat or submits a Canvas form
-2. Chat messages go: Browser → WS → UIClaw Server → Gateway → Agent
-3. Canvas actions go: iframe `sendToApp()` → postMessage → WS → Server → Gateway → Agent as `[CANVAS_ACTION]` block
-
-**Agent → User:**
-1. Agent calls `uiclaw_render` / `uiclaw_canvas` / `uiclaw_form`
-2. Plugin POSTs spec to `http://localhost:3800/api/ui`
-3. Server transforms file paths, pushes to all browser clients via WS
-4. React renders the component in the workspace panel
 
 ## Quick Start
 
@@ -87,8 +92,6 @@ Add the plugin to your OpenClaw config (`~/.openclaw/openclaw.json`):
 }
 ```
 
-Or let OpenClaw auto-discover it (it will warn about unsigned plugins).
-
 ### 4. Start the server
 
 ```bash
@@ -100,59 +103,21 @@ npx tsx src/index.ts
 
 ### 5. Open the UI
 
-Navigate to `http://localhost:3800` — or set up a Cloudflare Tunnel for remote access.
+Navigate to `http://localhost:3800`
 
 ## Agent Tools
 
-### `uiclaw_render`
+| Tool | Description |
+|------|-------------|
+| `uiclaw_render` | Push component trees (Stack, Card, DataTable, Markdown, ImageGrid, ColorPalette) |
+| `uiclaw_canvas` | Push custom HTML/CSS/JS rendered in a sandboxed iframe |
+| `uiclaw_form` | Show a form and wait for user input |
+| `uiclaw_read` | List saved interfaces or read HTML code for editing |
+| `uiclaw_load` | Load a previously saved interface from the registry (instant, zero tokens) |
 
-Push a component tree to the workspace panel.
+### Canvas Bridge
 
-```json
-{
-  "spec": {
-    "type": "Stack",
-    "children": [
-      { "type": "Card", "title": "Revenue", "icon": "💰", "content": "$2.3M" },
-      { "type": "DataTable", "columns": ["Q", "Rev"], "rows": [["Q1", "$500K"]] }
-    ]
-  }
-}
-```
-
-**Component types:** `Stack`, `Markdown`, `Card`, `DataTable`, `Canvas`, `ImageGrid`, `ColorPalette`, `Columns`
-
-### `uiclaw_canvas`
-
-Push custom HTML/CSS/JS rendered in a sandboxed iframe.
-
-```json
-{
-  "html": "<h1>Hello</h1><button onclick=\"sendToApp('action', {clicked: true})\">Click me</button>",
-  "height": 400,
-  "title": "My Widget"
-}
-```
-
-The `sendToApp(type, data)` function is automatically injected — use it to send structured data back to the agent without polluting the chat.
-
-### `uiclaw_form`
-
-Show a form and collect user input.
-
-```json
-{
-  "title": "Preferences",
-  "fields": [
-    { "id": "name", "label": "Name", "type": "text", "required": true },
-    { "id": "style", "label": "Style", "type": "select", "options": ["Minimal", "Bold"] }
-  ]
-}
-```
-
-## Canvas Bridge
-
-Custom Canvas HTML can communicate back to the agent:
+Custom Canvas HTML can communicate back to the agent without polluting the chat:
 
 ```html
 <button onclick="sendToApp('research', { names: ['Nick Halstead'] })">
@@ -160,15 +125,24 @@ Custom Canvas HTML can communicate back to the agent:
 </button>
 ```
 
-This sends a `[CANVAS_ACTION]` message to the agent, which can then process the data and push results back to the workspace. The data never appears in the chat.
+## Interface Registry
 
-## File Serving
+Every interface built by the agent is automatically:
 
-When the agent references local files (e.g., generated images), the server automatically:
+1. **Saved to disk** — HTML stored in `~/.openclaw/workspace/uiclaw-registry/interfaces/`
+2. **Screenshotted** — Playwright captures a PNG for the registry browser
+3. **Indexed** — Name, ID, and metadata tracked in `index.json`
 
-1. Transforms `/Users/.../image.png` → `/files/Users/.../image.png`
-2. Serves the file via `GET /files/*` with proper MIME types
-3. Restricts access to allowed directories (workspace, media, projects)
+On repeat requests, the agent loads the existing interface from disk instead of rebuilding — instant load, zero LLM tokens.
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENCLAW_GATEWAY_URL` | `ws://127.0.0.1:18789` | Gateway WebSocket URL |
+| `OPENCLAW_GATEWAY_TOKEN` | — | Gateway auth token |
+| `UICLAW_PORT` | `3800` | Server port |
+| `UICLAW_HOST` | `127.0.0.1` | Server bind address |
 
 ## Project Structure
 
@@ -179,48 +153,14 @@ uiclaw/
 ├── packages/
 │   ├── server/            # Node.js bridge server
 │   │   └── src/
-│   │       ├── index.ts          # HTTP + WS server
+│   │       ├── index.ts          # HTTP + WS + shared gateway
 │   │       └── gateway-client.ts # OpenClaw Gateway client
 │   ├── web/               # React frontend
 │   │   └── src/
-│   │       ├── App.tsx           # Main app + hooks
+│   │       ├── App.tsx           # Main app
 │   │       └── components.tsx    # UI component renderers
 │   └── ui-engine/         # Layout + component utilities
-├── Dockerfile             # Container build (optional)
 └── README.md
-```
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENCLAW_GATEWAY_URL` | `ws://127.0.0.1:18789` | Gateway WebSocket URL |
-| `OPENCLAW_GATEWAY_TOKEN` | — | Gateway auth token |
-| `UICLAW_PORT` | `3800` | Server port |
-| `UICLAW_HOST` | `127.0.0.1` | Server bind address |
-| `UICLAW_URL` | `http://127.0.0.1:3800` | Plugin push URL (in extension) |
-
-## Running as a Service (macOS)
-
-```bash
-# Copy the launchd plist
-cp com.gvtbot.uiclaw.plist ~/Library/LaunchAgents/
-
-# Load and start
-launchctl load ~/Library/LaunchAgents/com.gvtbot.uiclaw.plist
-```
-
-## Development
-
-```bash
-# Dev mode (auto-reload)
-cd packages/server && pnpm dev
-
-# Build frontend
-cd packages/web && pnpm build
-
-# Rebuild after changes
-pnpm build && pkill -f "tsx src/index.ts" && pnpm start
 ```
 
 ## Requirements
