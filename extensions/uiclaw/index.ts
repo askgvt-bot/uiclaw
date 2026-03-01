@@ -96,6 +96,8 @@ Example: { "type": "Stack", "children": [{ "type": "Card", "title": "Revenue", "
     name: "uiclaw_canvas",
     description: `Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk — only a summary stays in context.
 
+BEFORE BUILDING: Always call uiclaw_read first to check if a matching interface already exists in the registry. Adapt existing interfaces rather than building from scratch when possible.
+
 To modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.`,
     parameters: {
       type: "object",
@@ -125,7 +127,7 @@ To modify an existing interface: call uiclaw_read(id) first, edit the code, then
 
   api.registerTool({
     name: "uiclaw_read",
-    description: "Read the HTML code of a previously rendered Canvas interface. Use before modifying an existing interface.",
+    description: "Read the HTML code of a previously rendered Canvas interface. Call with id to load specific code, or with id=\"list\" to see all available interfaces. ALWAYS check this before building a new Canvas — reuse existing interfaces when they match the user's request.",
     parameters: {
       type: "object",
       properties: {
@@ -134,6 +136,10 @@ To modify an existing interface: call uiclaw_read(id) first, edit the code, then
       required: ["id"],
     },
     async execute(_ctx: any, params: { id: string }) {
+      if (params.id === "list") {
+        const available = listInterfaces();
+        return { content: [{ type: "text", text: available.length ? `Available interfaces:\n${available.map(i => \`- \${i.id} (\${i.lines} lines, \${i.sizeKb}KB)\`).join("\n")}` : "No interfaces saved yet." }] };
+      }
       const html = loadInterface(params.id);
       if (!html) {
         const available = listInterfaces();
