@@ -191,7 +191,10 @@ function useUIClaw() {
           actionType: e.data.type,
           data: e.data.data,
         }));
-        setIsLoading(true);
+        // Only show loading for interactive actions, not screenshots
+        if (e.data.type !== "screenshot-data") {
+          setIsLoading(true);
+        }
         console.log("[UIClaw] Canvas action sent to server");
       } else {
         console.warn("[UIClaw] WS not open, can't send canvas action");
