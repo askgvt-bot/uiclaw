@@ -34,12 +34,22 @@ function loadInterface(id: string): string | null {
   return null;
 }
 
-function listInterfaces(): { id: string; lines: number; sizeKb: number }[] {
+function listInterfaces(): { id: string; name: string; lines: number; sizeKb: number }[] {
   try {
+    // Read names from registry index.json
+    var names: Record<string, string> = {};
+    var indexPath = join(INTERFACES_DIR, "..", "index.json");
+    if (existsSync(indexPath)) {
+      var index = JSON.parse(readFileSync(indexPath, "utf-8"));
+      for (var entry of (index.interfaces || [])) {
+        if (entry.id && entry.name) names[entry.id] = entry.name;
+      }
+    }
     return readdirSync(INTERFACES_DIR).filter(function(f) { return f.endsWith(".html"); }).map(function(f) {
       var fp = join(INTERFACES_DIR, f);
-      var content = readFileSync(fp, "utf-8");
-      return { id: f.replace(".html", ""), lines: content.split("\n").length, sizeKb: Math.round(statSync(fp).size / 1024) };
+      var id = f.replace(".html", "");
+      var c = readFileSync(fp, "utf-8");
+      return { id: id, name: names[id] || "unnamed", lines: c.split("\n").length, sizeKb: Math.round(statSync(fp).size / 1024) };
     });
   } catch { return []; }
 }
@@ -133,14 +143,14 @@ export default function register(api: any) {
     async execute(_ctx: any, params: { id: string }) {
       if (params.id === "list") {
         var available = listInterfaces();
-        var lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        var lines = available.map(function(i) { return "- " + i.id + " (" + i.name + ", " + i.sizeKb + "KB)"; });
         var text = lines.length > 0 ? "Available interfaces:\n" + lines.join("\n") : "No interfaces saved yet.";
         return { content: [{ type: "text", text: text }] };
       }
       var html = loadInterface(params.id);
       if (!html) {
         var avail = listInterfaces();
-        var ls = avail.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        var ls = avail.map(function(i) { return "- " + i.id + " (" + i.name + ", " + i.sizeKb + "KB)"; });
         return { content: [{ type: "text", text: "Not found: " + params.id + "\n\nAvailable:\n" + (ls.join("\n") || "none") }] };
       }
       return { content: [{ type: "text", text: html }] };
@@ -163,7 +173,7 @@ export default function register(api: any) {
       var html = loadInterface(params.id);
       if (!html) {
         var available = listInterfaces();
-        var lines = available.map(function(i) { return "- " + i.id + " (" + i.lines + " lines, " + i.sizeKb + "KB)"; });
+        var lines = available.map(function(i) { return "- " + i.id + " (" + i.name + ", " + i.sizeKb + "KB)"; });
         return { content: [{ type: "text", text: "Not found: " + params.id + ". Available: " + (lines.join(", ") || "none") }] };
       }
       // skipRegister: true — don't re-register an already-registered interface
