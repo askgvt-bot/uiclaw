@@ -293,40 +293,17 @@ export function App() {
             console.error("[UIClaw] Could not request iframe screenshot:", e);
           }
         });
-      } else if (workspaceRef.current) {
-        // Non-iframe UI: use html2canvas
-        html2canvas(workspaceRef.current, {
-          backgroundColor: "#0f172a",
-          scale: 1,
-          logging: false,
-          useCORS: true,
-        }).then((canvas) => {
-          const dataUrl = canvas.toDataURL("image/png");
-          fetch("/api/registry/screenshot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ image: dataUrl }),
-          });
-          console.log("[UIClaw] Screenshot captured (html2canvas)");
-        }).catch((e) => console.error("[UIClaw] Screenshot failed:", e));
       }
+      // Screenshots captured via iframe postMessage → WebSocket canvas.action path
     }, 3000);
     return () => clearTimeout(timer);
   }, [uiSpec]);
 
-  // Listen for screenshot data from Canvas iframes
+  // Screenshot data from Canvas iframes goes through WebSocket canvas.action handler
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.source !== "uiclaw-canvas" || e.data?.type !== "screenshot-data") return;
-      const image = e.data.data;
-      if (!image) return;
-      fetch("/api/registry/screenshot", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image }),
-      }).then(() => {
-        console.log("[UIClaw] Screenshot captured (from iframe)");
-      }).catch((err) => console.error("[UIClaw] Screenshot POST failed:", err));
+      // Already handled by the postMessage → canvas.action → WebSocket path
     };
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);

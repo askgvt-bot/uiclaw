@@ -92,54 +92,7 @@ const httpServer = createServer((req, res) => {
   }
 
   // ── API: Registry screenshot upload (from frontend html2canvas) ──
-  if (req.method === "POST" && req.url === "/api/registry/screenshot") {
-    let body = "";
-    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
-    req.on("end", () => {
-      try {
-        const { image } = JSON.parse(body);
-        if (!image || !image.startsWith("data:image/png;base64,")) {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Invalid image data" }));
-          return;
-        }
-        const base64Data = image.replace(/^data:image\/png;base64,/, "");
-        const buffer = Buffer.from(base64Data, "base64");
-        
-        // Use lastRenderedId to match screenshot to the correct interface
-        const targetId = sharedState.lastRenderedId;
-        if (!targetId) {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true, skipped: true, reason: "no lastRenderedId" }));
-          return;
-        }
-        
-        const ssPath = join(REGISTRY_ROOT, "screenshots", targetId + ".png");
-        mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
-        writeFileSync(ssPath, buffer);
-        
-        // Update index.json entry
-        const indexPath = join(REGISTRY_ROOT, "index.json");
-        if (existsSync(indexPath)) {
-          const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-          const entry = (index.interfaces || []).find((e: any) => e.id === targetId);
-          if (entry) {
-            entry.screenshotFile = "screenshots/" + targetId + ".png";
-            entry.hasScreenshot = true;
-            writeFileSync(indexPath, JSON.stringify(index, null, 2));
-          }
-        }
-        
-        console.log("[Registry] Screenshot (POST) saved for " + targetId + " (" + Math.round(buffer.length / 1024) + "KB)");
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, id: targetId }));
-      } catch (e: any) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    });
-    return;
-  }
+  // Screenshot capture handled via WebSocket canvas.action path only
 
   // ── Serve local files referenced by agents (images, etc.) ──
   if (req.method === "GET" && req.url?.startsWith("/files/")) {
