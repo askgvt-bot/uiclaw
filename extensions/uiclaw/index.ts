@@ -18,14 +18,26 @@ const INTERFACES_DIR = join(
 
 mkdirSync(INTERFACES_DIR, { recursive: true });
 
-function saveInterface(html: string, _title?: string): { id: string; path: string; lines: number } {
+function saveInterface(html: string, title?: string): { id: string; path: string; lines: number } {
   const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
   const id = "ui_" + hash;
   const filepath = join(INTERFACES_DIR, id + ".html");
   writeFileSync(filepath, html);
+  // Update index.json so names are available for listing
+  try {
+    var indexPath = join(INTERFACES_DIR, "..", "index.json");
+    var idx: any = { interfaces: [] };
+    if (existsSync(indexPath)) idx = JSON.parse(readFileSync(indexPath, "utf-8"));
+    var found = false;
+    for (var e of (idx.interfaces || [])) { if (e.id === id) { found = true; break; } }
+    if (!found) {
+      idx.interfaces = idx.interfaces || [];
+      idx.interfaces.push({ id: id, name: title || "untitled", savedAt: new Date().toISOString() });
+      writeFileSync(indexPath, JSON.stringify(idx, null, 2));
+    }
+  } catch {}
   return { id, path: filepath, lines: html.split("\n").length };
 }
-
 function loadInterface(id: string): string | null {
   const filepath = join(INTERFACES_DIR, id + ".html");
   if (existsSync(filepath)) return readFileSync(filepath, "utf-8");
