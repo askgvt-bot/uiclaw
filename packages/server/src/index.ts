@@ -201,6 +201,7 @@ let sharedState = {
   currentUi: null as any,
   lastUserMessage: null as string | null,
   gatewayConnected: false,
+  lastRenderedId: null as string | null,
 };
 
 function initSharedGateway() {
@@ -266,22 +267,16 @@ wss.on("connection", (ws) => {
 
 // ─── Client → Gateway ────────────────────────────────────────
 
-function saveScreenshotFromBase64(dataUrl: string, _currentUi: any) {
-  // Find the most recently modified interface file — that's what the browser just rendered
-  const interfacesDir = join(REGISTRY_ROOT, "interfaces");
+function saveScreenshotFromBase64(dataUrl: string) {
+  const id = sharedState.lastRenderedId;
+  if (!id) { console.log("[Registry] No lastRenderedId — skipping screenshot"); return; }
   try {
-    const files = readdirSync(interfacesDir)
-      .filter((f: string) => f.endsWith(".html"))
-      .map((f: string) => ({ name: f, mtime: statSync(join(interfacesDir, f)).mtimeMs }))
-      .sort((a: any, b: any) => b.mtime - a.mtime);
-    if (files.length === 0) return;
-    const id = files[0].name.replace(".html", "");
     const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
     const buffer = Buffer.from(base64Data, "base64");
-    const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
     mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
+    const screenshotPath = join(REGISTRY_ROOT, "screenshots", id + ".png");
     writeFileSync(screenshotPath, buffer);
-    // Also update index.json with screenshot path
+    // Update index.json
     const indexPath = join(REGISTRY_ROOT, "index.json");
     if (existsSync(indexPath)) {
       const idx = JSON.parse(readFileSync(indexPath, "utf-8"));
@@ -336,7 +331,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       if (actionType === "screenshot-data" && typeof payload === "string" && payload.startsWith("data:image")) {
         console.log("[UIClaw] Screenshot received (" + Math.round(payload.length / 1024) + "KB) — saving to registry, NOT sending to agent");
         try {
-          saveScreenshotFromBase64(payload, sharedState.currentUi);
+          saveScreenshotFromBase64(payload);
         } catch (e: any) {
           console.error("[UIClaw] Screenshot save error: " + e.message);
         }
@@ -467,6 +462,12 @@ function handleSharedGatewayEvent(event: any) {
     const replace = payload.replace ?? true;
     sharedState.currentUi = mergeSpecs(sharedState.currentUi, spec, replace);
     broadcast({ type: "ui.update", spec: sharedState.currentUi, replace: true });
+    // Track the rendered interface ID by hashing the HTML content (same as plugin)
+    const html = spec?.html ?? spec?.children?.[0]?.html;
+    if (html) {
+      const hash = createHash("sha256").update(html).digest("hex").slice(0, 12);
+      sharedState.lastRenderedId = "ui_" + hash;
+    }
     autoRegisterInterface(sharedState.currentUi!, sharedState.lastUserMessage);
   }
 
