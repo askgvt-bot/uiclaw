@@ -7,7 +7,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer } from "http";
-import { readFileSync, existsSync, createReadStream } from "fs";
+import { readFileSync, existsSync, createReadStream, writeFileSync, mkdirSync } from "fs";
 import { resolve, join } from "path";
 import { GatewayClient } from "./gateway-client.js";
 import { autoLayout, normalizeSpec, mergeSpecs, type UISpec } from "@uiclaw/ui-engine";
@@ -16,6 +16,8 @@ const PORT = parseInt(process.env.UICLAW_PORT ?? "3800", 10);
 const HOST = process.env.UICLAW_HOST ?? "127.0.0.1";
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? "ws://127.0.0.1:18789";
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+const REGISTRY_ROOT = "/Users/nicholashalstead/.openclaw/workspace/uiclaw-registry";
+const REGISTRY_INDEX = join(REGISTRY_ROOT, "index.json");
 
 // Per-browser-client state
 interface ClientState {
@@ -49,10 +51,87 @@ const httpServer = createServer((req, res) => {
           console.log(`[API] Sending to client ${id}, ws.readyState=${state.ws.readyState}, open=${ready}`);
           send(state.ws, { ...data, type, spec });
         }
+        // Auto-register the interface
+        if (type !== "ui.form" && spec) {
+          autoRegisterInterface(spec as UISpec);
+        }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, clients: clients.size }));
       } catch (e: any) {
         res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── API: Registry index ──
+  if (req.method === "GET" && req.url === "/api/registry") {
+    try {
+      const raw = readFileSync(REGISTRY_INDEX, "utf8");
+      const data = JSON.parse(raw);
+      const interfaces = Array.isArray(data.interfaces) ? data.interfaces : [];
+      const rewritten = interfaces.map((entry: any) => {
+        if (!entry?.screenshotFile) return entry;
+        const absPath = entry.screenshotFile.startsWith("/")
+          ? entry.screenshotFile
+          : join(REGISTRY_ROOT, entry.screenshotFile);
+        return { ...entry, screenshotFile: `/files${absPath}` };
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ...data, interfaces: rewritten }));
+    } catch (e: any) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ── API: Registry screenshot upload (from frontend html2canvas) ──
+  if (req.method === "POST" && req.url === "/api/registry/screenshot") {
+    let body = "";
+    req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+    req.on("end", () => {
+      try {
+        const { image } = JSON.parse(body);
+        if (!image || !image.startsWith("data:image/png;base64,")) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid image data" }));
+          return;
+        }
+        const base64Data = image.replace(/^data:image\/png;base64,/, "");
+        const buffer = Buffer.from(base64Data, "base64");
+        
+        // Find the most recently registered interface
+        const indexPath = join(REGISTRY_ROOT, "index.json");
+        if (!existsSync(indexPath)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "No registry" }));
+          return;
+        }
+        const index = JSON.parse(readFileSync(indexPath, "utf-8"));
+        const latest = index.interfaces
+          .filter((e: any) => !e.hasScreenshot)
+          .sort((a: any, b: any) => new Date(b.created).getTime() - new Date(a.created).getTime())[0];
+        
+        if (!latest) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, skipped: true, reason: "all have screenshots" }));
+          return;
+        }
+        
+        const screenshotPath = join(REGISTRY_ROOT, latest.screenshotFile || `screenshots/${latest.id}.png`);
+        mkdirSync(join(REGISTRY_ROOT, "screenshots"), { recursive: true });
+        writeFileSync(screenshotPath, buffer);
+        
+        latest.hasScreenshot = true;
+        writeFileSync(indexPath, JSON.stringify(index, null, 2));
+        
+        console.log(`[Registry] Screenshot saved for ${latest.id} (${latest.name})`);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, id: latest.id }));
+      } catch (e: any) {
+        res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: e.message }));
       }
     });
@@ -85,7 +164,6 @@ const httpServer = createServer((req, res) => {
     stream.pipe(res);
     return;
   }
-
   const webDist = resolve(import.meta.dirname, "../../web/dist");
   
   if (!existsSync(webDist)) {
@@ -177,6 +255,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 
     case "ui.get": {
       send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
+    autoRegisterInterface(state.currentUi!);
       break;
     }
 
@@ -305,6 +384,7 @@ function handleGatewayEvent(clientId: string, event: any) {
     const replace = payload.replace ?? true;
     state.currentUi = mergeSpecs(state.currentUi, spec, replace);
     send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
+    autoRegisterInterface(state.currentUi!);
   }
 
   if (eventType === "uiclaw.form.show") {
@@ -342,3 +422,147 @@ httpServer.listen(PORT, HOST, () => {
   Auth:     ${GATEWAY_TOKEN ? "token ✓" : "none (loopback)"}
 `);
 });
+
+// ─── Auto-Registration ──────────────────────────────────────
+import { createHash } from "crypto";
+
+const REGISTRY_SPECS = join(REGISTRY_ROOT, "specs");
+const REGISTRY_SCREENSHOTS = join(REGISTRY_ROOT, "screenshots");
+
+function deriveInterfaceName(spec: any): string {
+  const type = (spec.type || "").toLowerCase();
+  
+  // Map component types to descriptive names
+  const typeNames: Record<string, string> = {
+    canvas: "Interactive Canvas",
+    datatable: "Data Table",
+    card: "Info Card",
+    stack: "Layout Stack",
+    markdown: "Content View",
+    imagegrid: "Image Gallery",
+    colorpalette: "Color Palette",
+  };
+  
+  // Check for specific content patterns
+  const str = JSON.stringify(spec).toLowerCase();
+  if (str.includes("spreadsheet") || str.includes("cell") || str.includes("grid")) return "Spreadsheet Interface";
+  if (str.includes("chart") || str.includes("graph")) return "Chart Visualization";
+  if (str.includes("dashboard")) return "Dashboard";
+  if (str.includes("form") || str.includes("input")) return "Form Interface";
+  if (str.includes("kanban") || str.includes("board")) return "Kanban Board";
+  if (str.includes("timeline") || str.includes("gantt")) return "Timeline View";
+  if (str.includes("calendar")) return "Calendar View";
+  if (str.includes("editor") || str.includes("code")) return "Code Editor";
+  if (str.includes("map") || str.includes("geo")) return "Map View";
+  if (str.includes("chat") || str.includes("message")) return "Chat Interface";
+  if (str.includes("table") || str.includes("rows") || str.includes("columns")) return "Data Table";
+  
+  // Fall back to type name
+  if (typeNames[type]) return typeNames[type];
+  if (type) return type.charAt(0).toUpperCase() + type.slice(1) + " Interface";
+  
+  // Check children for clues
+  if (spec.children && Array.isArray(spec.children)) {
+    const childTypes = spec.children.map((c: any) => (c.type || "").toLowerCase());
+    if (childTypes.includes("datatable")) return "Data Table Layout";
+    if (childTypes.includes("card")) return "Card Layout";
+    if (childTypes.includes("canvas")) return "Interactive Canvas Layout";
+  }
+  
+  return "Custom Interface";
+}
+
+function deriveInterfaceDescription(spec: any): string {
+  const name = deriveInterfaceName(spec);
+  const str = JSON.stringify(spec).toLowerCase();
+  const parts: string[] = [`${name}.`];
+  
+  // Count components
+  const componentCount = (JSON.stringify(spec).match(/"type"/g) || []).length;
+  if (componentCount > 1) parts.push(`${componentCount} components.`);
+  
+  // Note interactive features
+  if (str.includes("onclick") || str.includes("button") || str.includes("click")) parts.push("Interactive.");
+  if (str.includes("input") || str.includes("editable")) parts.push("Editable.");
+  
+  return parts.join(" ");
+}
+
+function autoRegisterInterface(spec: UISpec) {
+  try {
+    // Generate stable ID from spec content
+    const specStr = JSON.stringify(spec, null, 2);
+    const hash = createHash("sha256").update(specStr).digest("hex").slice(0, 12);
+    const id = `ui_${hash}`;
+    
+    // Derive name and description from spec
+    const name = deriveInterfaceName(spec);
+    const description = deriveInterfaceDescription(spec);
+    const tags = inferTags(spec);
+    
+    // Ensure dirs exist
+    mkdirSync(REGISTRY_SPECS, { recursive: true });
+    mkdirSync(REGISTRY_SCREENSHOTS, { recursive: true });
+    
+    // Save spec
+    const specFile = `specs/${id}.json`;
+    writeFileSync(join(REGISTRY_ROOT, specFile), specStr);
+    
+    // Update index
+    const indexPath = join(REGISTRY_ROOT, "index.json");
+    let index: any = { version: 1, interfaces: [] };
+    if (existsSync(indexPath)) {
+      index = JSON.parse(readFileSync(indexPath, "utf-8"));
+    }
+    
+    const existing = index.interfaces.findIndex((e: any) => e.id === id);
+    const now = new Date().toISOString();
+    const entry = {
+      id,
+      name,
+      description,
+      type: (spec as any).type || "render",
+      tags,
+      inputs: { description: "", schema: {} },
+      outputs: { description: "", interactive: false },
+      specFile,
+      screenshotFile: `screenshots/${id}.png`,
+      hasScreenshot: false,
+      created: now,
+      lastUsed: now,
+      useCount: 1,
+    };
+    
+    if (existing >= 0) {
+      // Update existing — bump useCount and lastUsed
+      index.interfaces[existing].useCount = (index.interfaces[existing].useCount || 0) + 1;
+      index.interfaces[existing].lastUsed = now;
+    } else {
+      index.interfaces.push(entry);
+    }
+    
+    writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    console.log(`[Registry] Auto-registered: ${id} (${name})`);
+    
+    
+  } catch (e: any) {
+    console.error(`[Registry] Auto-register failed:`, e.message);
+  }
+}
+
+function inferTags(spec: any): string[] {
+  const tags: string[] = [];
+  const str = JSON.stringify(spec).toLowerCase();
+  if (str.includes("table") || str.includes("datatable") || str.includes("spreadsheet")) tags.push("table", "data");
+  if (str.includes("card")) tags.push("card");
+  if (str.includes("chart") || str.includes("graph")) tags.push("chart", "visualization");
+  if (str.includes("form") || str.includes("input")) tags.push("form");
+  if (str.includes("dashboard")) tags.push("dashboard");
+  if (str.includes("status") || str.includes("health")) tags.push("status");
+  if (str.includes("markdown")) tags.push("content");
+  if (str.includes("canvas")) tags.push("canvas", "interactive");
+  if (str.includes("image") || str.includes("gallery")) tags.push("media");
+  if (tags.length === 0) tags.push("general");
+  return [...new Set(tags)];
+}
+

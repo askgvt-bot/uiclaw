@@ -178,10 +178,27 @@ function CanvasComponent({ component }: { component: UIComponent }) {
 
   const darkStyles = `<style>body{background:#1e293b!important;color:#e2e8f0!important;font-family:system-ui,sans-serif;margin:0;padding:16px;} a{color:#38bdf8!important;} h1,h2,h3{color:#f1f5f9!important;}</style>`;
   // Inject a postMessage bridge so Canvas HTML can send data back to the app
-  const bridge = `<script>
+  const bridge = `<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script>
     function sendToApp(type, data) {
       window.parent.postMessage({ source: 'uiclaw-canvas', type, data }, '*');
     }
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.source === 'uiclaw-parent' && e.data.type === 'capture-screenshot') {
+        if (typeof html2canvas === 'function') {
+          html2canvas(document.body, {
+            backgroundColor: getComputedStyle(document.body).backgroundColor || '#1e293b',
+            scale: 1,
+            logging: false,
+          }).then(function(canvas) {
+            var dataUrl = canvas.toDataURL('image/png');
+            window.parent.postMessage({ source: 'uiclaw-canvas', type: 'screenshot-data', data: dataUrl }, '*');
+          }).catch(function(err) {
+            console.error('Screenshot failed:', err);
+          });
+        }
+      }
+    });
   </script>`;
   const html = rawHtml.includes("<head>")
     ? rawHtml.replace("<head>", `<head>${darkStyles}${bridge}`)

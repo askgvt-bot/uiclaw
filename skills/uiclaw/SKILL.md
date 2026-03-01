@@ -46,3 +46,33 @@ UIClaw uses session key `"uiclaw"` — separate from WhatsApp/Telegram sessions.
 ## Architecture
 
 Browser → UIClaw Server (Docker, port 3800) → OpenClaw Gateway WebSocket (protocol v3)
+
+## Interface Registry
+
+UIClaw has an **Interface Registry** — a growing catalog of previously-built interfaces at `~/.openclaw/workspace/uiclaw-registry/`.
+
+### Before Building Any UI
+
+**Always check the registry first.** Read `/api/registry` (or the local `index.json`) and look for a matching interface. If a previous interface is a good match for what the user is asking for (same type of component, similar purpose), **load and adapt it** rather than building from scratch.
+
+### How to Check
+
+```bash
+cat ~/.openclaw/workspace/uiclaw-registry/index.json
+```
+
+Look at `name`, `description`, and `tags` for each entry. If one matches:
+1. Read the spec from `specs/<id>.json`
+2. Adapt it to the current request (change data, labels, etc.)
+3. Render the adapted version
+
+### When to Build Fresh
+
+Only build from scratch when:
+- No existing interface matches the request
+- The user explicitly asks for something new or different
+- The existing match would need more changes than building fresh
+
+### Auto-Registration
+
+All rendered interfaces are **automatically saved** to the registry — you don't need to manually register them. The system captures the spec, derives a name from the content, infers tags, and takes a screenshot.

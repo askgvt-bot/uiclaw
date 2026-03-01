@@ -45,7 +45,7 @@ function extractExplicitSpecs(text: string): { specs: UISpec[]; cleanText: strin
 function detectTables(text: string): UIComponent[] {
   const components: UIComponent[] = [];
   const tableRegex = /\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/gm;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = tableRegex.exec(text)) !== null) {
     const headerLine = match[1];
     const bodyLines = match[2].trim().split("\n");
@@ -69,7 +69,7 @@ function detectTables(text: string): UIComponent[] {
 function detectCodeBlocks(text: string): UIComponent[] {
   const components: UIComponent[] = [];
   const codeRegex = /```(\w*)\n([\s\S]*?)```/gm;
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = codeRegex.exec(text)) !== null) {
     const lang = match[1] || "text";
     const code = match[2].trim();
@@ -104,7 +104,7 @@ function detectCodeBlocks(text: string): UIComponent[] {
 function detectImages(text: string): UIComponent[] {
   const imgRegex = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp|svg)[^\s)]*)\)/gm;
   const images: { alt: string; url: string }[] = [];
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = imgRegex.exec(text)) !== null) {
     images.push({ alt: match[1], url: match[2] });
   }
@@ -112,7 +112,7 @@ function detectImages(text: string): UIComponent[] {
   // Also check for raw image URLs
   const rawImgRegex = /(?:^|\s)(https?:\/\/[^\s)]+\.(?:png|jpg|jpeg|gif|webp|svg)(?:\?[^\s)]*)?)/gm;
   while ((match = rawImgRegex.exec(text)) !== null) {
-    if (!images.some(i => i.url === match[1])) {
+    if (!images.some(i => i.url === match![1])) {
       images.push({ alt: "", url: match[1] });
     }
   }
@@ -133,7 +133,7 @@ function detectStructuredList(text: string): UIComponent[] {
   // Look for patterns like "### Title\n- Point 1\n- Point 2" repeated
   const sectionRegex = /(?:^|\n)###?\s+(.+)\n((?:\s*[-•*]\s+.+\n?)+)/gm;
   const sections: { title: string; items: string[] }[] = [];
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = sectionRegex.exec(text)) !== null) {
     const title = match[1].trim();
     const items = match[2].trim().split("\n").map(l => l.replace(/^\s*[-•*]\s+/, "").trim()).filter(Boolean);
@@ -175,7 +175,7 @@ function detectLinks(text: string): UIComponent[] {
   // Named links: [text](url)
   const namedRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gm;
   const links: { title: string; url: string }[] = [];
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = namedRegex.exec(text)) !== null) {
     links.push({ title: match[1], url: match[2] });
   }
