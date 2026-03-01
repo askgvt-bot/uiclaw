@@ -92,7 +92,7 @@ export default function register(api: any) {
   // ── uiclaw_canvas ──
   api.registerTool({
     name: "uiclaw_canvas",
-    description: "Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk \u2014 only a summary stays in context.\n\nBEFORE BUILDING: Call uiclaw_read(id=\"list\") to check existing interfaces. If one matches, use uiclaw_load(id) to render it directly (zero context cost). Only use uiclaw_read(id) if you need to modify the code.\n\nTo modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.",
+    description: "Render custom HTML/CSS/JS in the UIClaw workspace. HTML is auto-saved to disk \u2014 only a summary stays in context.\n\nTo modify an existing interface: call uiclaw_read(id) first, edit the code, then render again.",
     parameters: {
       type: "object",
       properties: {
