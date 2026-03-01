@@ -24,6 +24,7 @@ interface ClientState {
   ws: WebSocket;
   gateway: GatewayClient;
   currentUi: UISpec | null;
+  lastUserMessage: string | null;
 }
 
 const clients = new Map<string, ClientState>();
@@ -53,7 +54,7 @@ const httpServer = createServer((req, res) => {
         }
         // Auto-register the interface
         if (type !== "ui.form" && spec) {
-          autoRegisterInterface(spec as UISpec);
+          autoRegisterInterface(spec as UISpec, data.title || data.description || null);
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, clients: clients.size }));
@@ -208,7 +209,7 @@ wss.on("connection", (ws) => {
     onError: (error) => send(ws, { type: "error", message: error }),
   });
 
-  const state: ClientState = { ws, gateway, currentUi: null };
+  const state: ClientState = { ws, gateway, currentUi: null, lastUserMessage: null };
   clients.set(clientId, state);
   gateway.connect();
 
@@ -234,6 +235,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
     case "chat.send": {
       const text = msg.text?.trim();
       if (!text) return;
+      state.lastUserMessage = text;
       try {
         const key = await state.gateway.sendMessage(text);
         send(state.ws, { type: "chat.ack", idempotencyKey: key });
@@ -255,7 +257,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
 
     case "ui.get": {
       send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
-    autoRegisterInterface(state.currentUi!);
+    autoRegisterInterface(state.currentUi!, state.lastUserMessage);
       break;
     }
 
@@ -384,7 +386,7 @@ function handleGatewayEvent(clientId: string, event: any) {
     const replace = payload.replace ?? true;
     state.currentUi = mergeSpecs(state.currentUi, spec, replace);
     send(state.ws, { type: "ui.update", spec: state.currentUi, replace: true });
-    autoRegisterInterface(state.currentUi!);
+    autoRegisterInterface(state.currentUi!, state.lastUserMessage);
   }
 
   if (eventType === "uiclaw.form.show") {
@@ -428,6 +430,24 @@ import { createHash } from "crypto";
 
 const REGISTRY_SPECS = join(REGISTRY_ROOT, "specs");
 const REGISTRY_SCREENSHOTS = join(REGISTRY_ROOT, "screenshots");
+
+function deriveNameFromIntent(intent: string): string {
+  // Clean up the user's request into a concise interface name
+  let name = intent
+    .replace(/^(build|create|make|show|give|generate|render|design|can you|please|i want|i need)\s+(me\s+)?(a\s+|an\s+)?/i, "")
+    .replace(/\s+(please|thanks|thank you|for me|asap)$/i, "")
+    .trim();
+  
+  // Capitalize first letter of each word, limit length
+  name = name
+    .split(/\s+/)
+    .slice(0, 6) // Max 6 words
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+  
+  if (!name) return "Custom Interface";
+  return name;
+}
 
 function deriveInterfaceName(spec: any): string {
   const type = (spec.type || "").toLowerCase();
@@ -488,7 +508,7 @@ function deriveInterfaceDescription(spec: any): string {
   return parts.join(" ");
 }
 
-function autoRegisterInterface(spec: UISpec) {
+function autoRegisterInterface(spec: UISpec, userIntent?: string | null) {
   try {
     // Generate stable ID from spec content
     const specStr = JSON.stringify(spec, null, 2);
@@ -496,8 +516,8 @@ function autoRegisterInterface(spec: UISpec) {
     const id = `ui_${hash}`;
     
     // Derive name and description from spec
-    const name = deriveInterfaceName(spec);
-    const description = deriveInterfaceDescription(spec);
+    const name = userIntent ? deriveNameFromIntent(userIntent) : deriveInterfaceName(spec);
+    const description = userIntent || deriveInterfaceDescription(spec);
     const tags = inferTags(spec);
     
     // Ensure dirs exist
