@@ -234,18 +234,6 @@ wss.on("connection", (ws) => {
 
 // ─── Client → Gateway ────────────────────────────────────────
 
-function getRegistrySummary(): string {
-  try {
-    const indexPath = join(REGISTRY_ROOT, "index.json");
-    if (!existsSync(indexPath)) return "";
-    const index = JSON.parse(readFileSync(indexPath, "utf-8"));
-    const entries = index.interfaces || [];
-    if (entries.length === 0) return "";
-    const list = entries.map((e: any) => e.id + " (" + (e.name || "unnamed") + ")").join(", ");
-    return "\n[Available in registry: " + list + ". Use uiclaw_load(id) to render instantly.]";
-  } catch { return ""; }
-}
-
 async function handleClientMessage(clientId: string, state: ClientState, msg: any) {
   switch (msg.type) {
     case "chat.send": {
@@ -253,9 +241,7 @@ async function handleClientMessage(clientId: string, state: ClientState, msg: an
       if (!text) return;
       state.lastUserMessage = text;
       try {
-        const registryHint = getRegistrySummary();
-        const enrichedText = registryHint ? text + registryHint : text;
-        const key = await state.gateway.sendMessage(enrichedText);
+        const key = await state.gateway.sendMessage(text);
         send(state.ws, { type: "chat.ack", idempotencyKey: key });
       } catch (e: any) {
         send(state.ws, { type: "error", message: `Send failed: ${e.message}` });

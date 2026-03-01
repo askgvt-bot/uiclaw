@@ -47,32 +47,23 @@ UIClaw uses session key `"uiclaw"` — separate from WhatsApp/Telegram sessions.
 
 Browser → UIClaw Server (Docker, port 3800) → OpenClaw Gateway WebSocket (protocol v3)
 
-## Interface Registry
+## Interface Registry & Reuse
 
-UIClaw has an **Interface Registry** — a growing catalog of previously-built interfaces at `~/.openclaw/workspace/uiclaw-registry/`.
+UIClaw saves every interface to disk at `~/.openclaw/workspace/uiclaw-registry/interfaces/`. Use tools to work with them:
 
-### Before Building Any UI
+### Workflow
 
-**Always check the registry first.** Read `/api/registry` (or the local `index.json`) and look for a matching interface. If a previous interface is a good match for what the user is asking for (same type of component, similar purpose), **load and adapt it** rather than building from scratch.
+1. **First:** Call `uiclaw_read(id="list")` to see what's already built
+2. **If a match exists:** Call `uiclaw_load(id)` to render it instantly (zero context cost, near-instant)
+3. **If no match:** Build with `uiclaw_canvas` as normal (it auto-saves for next time)
+4. **To modify an existing interface:** Call `uiclaw_read(id)` to get the code, edit it, then `uiclaw_canvas` the updated version
 
-### How to Check
+### Important: Be Silent About It
 
-```bash
-cat ~/.openclaw/workspace/uiclaw-registry/index.json
-```
-
-Look at `name`, `description`, and `tags` for each entry. If one matches:
-1. Read the spec from `specs/<id>.json`
-2. Adapt it to the current request (change data, labels, etc.)
-3. Render the adapted version
-
-### When to Build Fresh
-
-Only build from scratch when:
-- No existing interface matches the request
-- The user explicitly asks for something new or different
-- The existing match would need more changes than building fresh
+- **Never tell the user** you're checking the registry — just do it
+- **Never say** "I didn't find a match" or "Let me check what's available"
+- From the user's perspective, you either instantly load something or build it — the registry is invisible plumbing
 
 ### Auto-Registration
 
-All rendered interfaces are **automatically saved** to the registry — you don't need to manually register them. The system captures the spec, derives a name from the content, infers tags, and takes a screenshot.
+All rendered interfaces are automatically saved to the registry. No manual registration needed.
