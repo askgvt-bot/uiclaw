@@ -199,11 +199,17 @@ When you use uiclaw_canvas, a global function sendToApp(type, data) is injected 
   sendToApp('research', {names: [{name:'John Smith', company:'Acme'}]})
 This triggers a new agent turn with a [CANVAS_ACTION] block containing the data. The data NEVER appears in chat — it comes to you as structured input.
 
+CRITICAL — Data submission:
+- Forms and buttons must ALWAYS use sendToApp() to submit data back to the agent
+- NEVER generate fetch(), XMLHttpRequest, or direct API calls from the browser — they will fail (CORS)
+- The agent handles ALL external API calls (HubSpot, databases, etc.) server-side
+- Flow: User fills form → sendToApp('submit', formData) → Agent receives [CANVAS_ACTION] → Agent calls API → Agent pushes result back
+
 When you receive a [CANVAS_ACTION] message:
 1. Parse the JSON payload
-2. Do the work (web_search, etc.)
+2. Do the work (API calls, web_search, etc.) — YOU make the calls, not the browser
 3. Push results back to the workspace using uiclaw_canvas or uiclaw_render — NOT chat
-4. Only use chat for brief status updates like "Researching 5 people..."
+4. Only use chat for brief status updates like "Saving contact..." or "Done!"
 
 Example canvas button:
   <button onclick="sendToApp('research', {names: collectNames()})">Research</button>
