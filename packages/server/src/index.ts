@@ -203,7 +203,7 @@ wss.on("connection", (ws) => {
 
   // Send current state to new client
   if (sharedState.gatewayConnected) send(ws, { type: "gateway.connected" });
-  if (sharedState.currentUi) send(ws, { type: "ui.update", spec: sharedState.currentUi, replace: true });
+  // Don't auto-push last UI on connect — feels like a bug on refresh
 
   ws.on("message", (raw) => {
     try {
